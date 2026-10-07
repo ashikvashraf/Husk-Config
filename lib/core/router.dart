@@ -1,6 +1,7 @@
 import 'package:go_router/go_router.dart';
 
 import '../features/dashboard/dashboard_screen.dart';
+import '../features/servers/scan_screen.dart';
 import '../features/servers/server_form_screen.dart';
 
 GoRouter createRouter() => GoRouter(
@@ -13,6 +14,7 @@ GoRouter createRouter() => GoRouter(
             initialPort: int.tryParse(state.uri.queryParameters['port'] ?? ''),
           ),
         ),
+        GoRoute(path: '/servers/scan', builder: (context, state) => const ScanScreen()),
         GoRoute(
           path: '/servers/:id/edit',
           builder: (context, state) => ServerFormScreen(serverId: state.pathParameters['id']),
