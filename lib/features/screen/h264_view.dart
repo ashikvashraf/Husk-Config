@@ -22,6 +22,7 @@ class _H264ViewState extends State<H264View> {
   late final VideoController _controller = VideoController(_player);
   StreamSubscription<String>? _errors;
   Timer? _watchdog;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -30,25 +31,39 @@ class _H264ViewState extends State<H264View> {
   }
 
   Future<void> _start() async {
-    final native = _player.platform;
-    if (native is NativePlayer) {
-      await native.setProperty('profile', 'low-latency');
-      await native.setProperty('cache', 'no');
-      await native.setProperty('untimed', 'yes');
+    try {
+      final native = _player.platform;
+      if (native is NativePlayer) {
+        await native.setProperty('profile', 'low-latency');
+        if (_disposed) return;
+        await native.setProperty('cache', 'no');
+        if (_disposed) return;
+        await native.setProperty('untimed', 'yes');
+        if (_disposed) return;
+      }
+      // mpv errors may echo the URL; strip it so the token never reaches the UI.
+      _errors = _player.stream.error.listen((e) => _fail(e.replaceAll(widget.uri.toString(), '/screen.mp4')));
+      await _player.open(Media(widget.uri.toString()));
+      if (_disposed) return;
+      if (widget.catchUpSeek) {
+        _watchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+          final state = _player.state;
+          if (state.buffer - state.position > const Duration(seconds: 2)) _player.seek(state.buffer);
+        });
+      }
+    } catch (e) {
+      // The error text may echo the URL (and its token), so report only a generic reason.
+      _fail('could not start the player');
     }
-    // mpv errors may echo the URL; strip it so the token never reaches the UI.
-    _errors = _player.stream.error.listen((e) => widget.onFailed(e.replaceAll(widget.uri.toString(), '/screen.mp4')));
-    await _player.open(Media(widget.uri.toString()));
-    if (widget.catchUpSeek) {
-      _watchdog = Timer.periodic(const Duration(seconds: 2), (_) {
-        final state = _player.state;
-        if (state.buffer - state.position > const Duration(seconds: 2)) _player.seek(state.buffer);
-      });
-    }
+  }
+
+  void _fail(String message) {
+    if (!_disposed && mounted) widget.onFailed(message);
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _watchdog?.cancel();
     _errors?.cancel();
     _player.dispose();

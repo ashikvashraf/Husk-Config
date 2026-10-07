@@ -96,8 +96,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
           api,
           deviceSize,
           H264View(
-            key: ValueKey('screen-h264-$_display'),
-            uri: api.uri('/screen.mp4', _display == 0 ? const {} : {'d': _display}),
+            uri: api.uri('/screen.mp4'),
             catchUpSeek: h264CatchUpSeek,
             onFailed: (message) {
               if (!mounted || _h264Failed) return;
@@ -192,7 +191,8 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     final display = ref.watch(_displaySizeProvider((id, _display)));
     final displays = ref.watch(displaysProvider(id)).value ?? const [DisplayEntry(id: 0, raw: '0')];
     final available = availableScreenModes(
-      h264Supported: h264Platforms.contains(defaultTargetPlatform),
+      // /screen.mp4 is only specified for the main display, so other displays use MJPEG.
+      h264Supported: h264Platforms.contains(defaultTargetPlatform) && _display == 0,
       h264Failed: _h264Failed,
     );
     final mode = effectiveScreenMode(

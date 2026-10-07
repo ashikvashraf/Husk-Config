@@ -102,4 +102,16 @@ void main() {
     await tester.pumpAndSettle();
     verify(() => api.tap(360, 640, display: 1)).called(1);
   });
+
+  testWidgets('H.264 is offered for display 0 only, other displays fall back to MJPEG', (tester) async {
+    await pump(tester, screenSharing: true, secondDisplay: true);
+    expect(find.text('H.264'), findsOneWidget);
+
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Display 1').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('H.264'), findsNothing);
+  });
 }
