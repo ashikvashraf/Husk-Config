@@ -4,6 +4,10 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import 'husk_exception.dart';
+import 'models/device_models.dart';
+import 'models/hardware_models.dart';
+import 'models/json_read.dart';
+import 'models/tools_models.dart';
 import 'text_result.dart';
 
 /// Body of a streaming (MJPEG) response plus its Content-Type header.
@@ -56,6 +60,54 @@ class HuskApi {
   // ---------------------------------------------------------------- Status
 
   Future<bool> healthz() async => (await _text('/healthz', auth: false)).trim() == 'ok';
+
+  Future<DeviceInfo> info() async => DeviceInfo.fromJson(await _map('/info'));
+
+  Future<Flags> flags() async => Flags.fromJson(await _map('/flags'));
+
+  // -------------------------------------------------------------- Hardware
+
+  Future<BatteryInfo> battery() async => BatteryInfo.fromJson(await _map('/battery'));
+
+  Future<ConnectivityInfo> connectivity() async => ConnectivityInfo.fromJson(await _map('/connectivity'));
+
+  Future<DisplayInfo> display() async => DisplayInfo.fromJson(await _map('/display'));
+
+  Future<LocationInfo> location() async => LocationInfo.fromJson(await _map('/location'));
+
+  Future<MicLevel> mic() async => MicLevel.fromJson(await _map('/mic'));
+
+  Future<List<SensorInfo>> sensors() async => [for (final e in await _list('/sensors')) SensorInfo.fromJson(readMap(e))];
+
+  Future<SensorReading> sensor(String type) async => SensorReading.fromJson(await _map('/sensor', query: {'type': type}));
+
+  Future<Map<String, VolumeLevel>> volume() async => VolumeLevel.parseAll(await _map('/volume'));
+
+  Future<String> ringerMode() async => readString((await _map('/ringer'))['mode']) ?? 'unknown';
+
+  Future<BrightnessInfo> brightness() async => BrightnessInfo.fromJson(await _map('/brightness'));
+
+  Future<List<DisplayEntry>> displays() async => DisplayEntry.parseList(await _text('/displays'));
+
+  // ---------------------------------------------------------------- Motion
+
+  Future<MotionConfig> motion() async => MotionConfig.fromJson(await _map('/motion'));
+
+  Future<List<MotionEvent>> events() async => [for (final e in await _list('/events')) MotionEvent.fromJson(readMap(e))];
+
+  // ----------------------------------------------------------------- Token
+
+  Future<TokenRequest> requestToken({required String client}) async =>
+      TokenRequest.fromJson(await _map('/token/request', query: {'client': client}, auth: false));
+
+  Future<TokenStatus> tokenStatus(String id) async =>
+      TokenStatus.fromJson(await _map('/token/status', query: {'id': id}, auth: false));
+
+  // ------------------------------------------------------------ Management
+
+  Future<WdInfo> wd() async => WdInfo.fromJson(await _map('/wd', receiveTimeout: _slow));
+
+  Future<PairInfo> pair() async => PairInfo.fromJson(await _map('/pair', receiveTimeout: _slow));
 
   // ------------------------------------------------------- Camera & screen
 
@@ -166,14 +218,12 @@ class HuskApi {
     throw DeviceErrorException(body.isEmpty ? 'Empty response' : body);
   }
 
-  // ignore: unused_element
   Future<Map<String, Object?>> _map(String path, {Map<String, Object?> query = const {}, bool auth = true, Duration? receiveTimeout}) async {
     final value = await _json(path, query: query, auth: auth, receiveTimeout: receiveTimeout);
     if (value is Map<String, Object?>) return value;
     throw DeviceErrorException('Unexpected response from $path');
   }
 
-  // ignore: unused_element
   Future<List<Object?>> _list(String path, {Map<String, Object?> query = const {}}) async {
     final value = await _json(path, query: query);
     if (value is List<Object?>) return value;
