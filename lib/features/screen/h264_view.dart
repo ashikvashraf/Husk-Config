@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'latency_drift.dart';
+
 /// Plays Husk's live fMP4 /screen.mp4 with mpv's low-latency settings.
-/// Calls [onFailed] on any player error so the tab can fall back to MJPEG.
+/// Calls [onFailed] on any player error, or when playback keeps drifting more
+/// than ~2 s behind the live edge, so the tab can fall back to MJPEG.
 class H264View extends StatefulWidget {
   const H264View({super.key, required this.uri, required this.onFailed, this.catchUpSeek = true});
 
@@ -21,8 +24,12 @@ class _H264ViewState extends State<H264View> {
   late final Player _player = Player();
   late final VideoController _controller = VideoController(_player);
   StreamSubscription<String>? _errors;
+  StreamSubscription<Duration>? _positions;
+  final _clock = Stopwatch();
+  final _drift = LatencyDriftMonitor();
   Timer? _watchdog;
   bool _disposed = false;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -43,6 +50,10 @@ class _H264ViewState extends State<H264View> {
       }
       // mpv errors may echo the URL; strip it so the token never reaches the UI.
       _errors = _player.stream.error.listen((e) => _fail(e.replaceAll(widget.uri.toString(), '/screen.mp4')));
+      _positions = _player.stream.position.listen((position) {
+        if (!_clock.isRunning) _clock.start();
+        if (_drift.sample(_clock.elapsed, position)) _fail('latency drifted past 2 s');
+      });
       await _player.open(Media(widget.uri.toString()));
       if (_disposed) return;
       if (widget.catchUpSeek) {
@@ -58,7 +69,9 @@ class _H264ViewState extends State<H264View> {
   }
 
   void _fail(String message) {
-    if (!_disposed && mounted) widget.onFailed(message);
+    if (_failed || _disposed || !mounted) return;
+    _failed = true;
+    widget.onFailed(message);
   }
 
   @override
@@ -66,6 +79,7 @@ class _H264ViewState extends State<H264View> {
     _disposed = true;
     _watchdog?.cancel();
     _errors?.cancel();
+    _positions?.cancel();
     _player.dispose();
     super.dispose();
   }
