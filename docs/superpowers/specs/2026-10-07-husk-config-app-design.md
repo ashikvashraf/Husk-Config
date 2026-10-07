@@ -48,7 +48,7 @@ A **personal** cross-platform management app for controlling and monitoring the 
 - `/location` → `ERR no-fix (no known position; is location turned on?)` as `text/plain`, HTTP 200.
 - `/display` → `rotation` is a **string** (`"0"`); `refreshHz` is a double.
 - `/display` 1080x2112 excludes the 108 px nav bar; `/info` screen and the `/screen` and `/screen.mp4` frames are the full 1080x2220.
-- `/displays` → plain text `0:0` (one `id:state` line per display).
+- `/displays` → plain text list of `id:state` entries (e.g. `0:0`). The list can be comma-separated on one line (observed on the real phone: `0:0,2:0,13:0`) as well as one entry per line; the parser splits on both newlines and commas, trims, ignores malformed entries and keeps the order.
 - `/volume` read → `{"media":{"level":0,"max":15},…,"call":{"level":4,"max":5}}`; `/sensors` → array of `{name,type(int),vendor,power,max}`.
 - `/token/set` without a token → HTTP 409 `{"error":"no token set; use /token/request"}`; unknown path → HTTP 404 `not found`.
 - `/stream` → `multipart/x-mixed-replace; boundary=rigframe`, parts are `--rigframe\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<jpeg>`; HTTP/1.0, `Connection: close`.

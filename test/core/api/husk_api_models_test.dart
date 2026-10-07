@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huskconfig/core/api/husk_exception.dart';
+import 'package:huskconfig/core/api/models/hardware_models.dart';
 import 'package:huskconfig/core/api/models/tools_models.dart';
 
 import '../../support/fake_adapter.dart';
@@ -107,6 +108,21 @@ void main() {
     final d = await fakeApi((_) => textBody('0:0\n2:1\n')).api.displays();
     expect(d.map((e) => e.id), [0, 2]);
     expect(d.first.raw, '0:0');
+  });
+
+  test('displays() parses a comma-separated single line (real phone: 0:0,2:0,13:0)', () async {
+    final d = await fakeApi((_) => textBody('0:0,2:0,13:0')).api.displays();
+    expect(d.map((e) => e.id), [0, 2, 13]);
+    expect(d.map((e) => e.raw), ['0:0', '2:0', '13:0']);
+  });
+
+  group('DisplayEntry.parseList', () {
+    List<int> ids(String t) => DisplayEntry.parseList(t).map((e) => e.id).toList();
+
+    test('splits on newlines and commas, in order', () => expect(ids('0:0\n2:1,3:0'), [0, 2, 3]));
+    test('trims whitespace around entries', () => expect(ids(' 0:0 , 2:0 ,\r\n 13:0 \n'), [0, 2, 13]));
+    test('ignores malformed and empty entries', () => expect(ids('0:0,,x:1,abc,2:0,'), [0, 2]));
+    test('empty text gives an empty list', () => expect(ids(''), isEmpty));
   });
 
   test('motion() and events()', () async {

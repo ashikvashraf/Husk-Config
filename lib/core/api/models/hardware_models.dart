@@ -187,12 +187,14 @@ class BrightnessInfo {
   final bool auto;
 }
 
-/// One line of GET /displays (plain text, `id:state` per line, e.g. `0:0`).
+/// One `id:state` entry of GET /displays (plain text, e.g. `0:0`). The phone sends
+/// the list comma-separated on one line (`0:0,2:0,13:0`); one entry per line is
+/// accepted too, and the two may be mixed.
 class DisplayEntry {
   const DisplayEntry({required this.id, required this.raw});
 
   static List<DisplayEntry> parseList(String text) => [
-        for (final line in text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty))
+        for (final line in text.split(RegExp(r'[\n,]')).map((l) => l.trim()).where((l) => l.isNotEmpty))
           if (int.tryParse(line.split(':').first.trim()) case final int id) DisplayEntry(id: id, raw: line),
       ];
 
