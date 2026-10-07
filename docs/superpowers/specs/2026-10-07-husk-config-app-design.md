@@ -43,6 +43,15 @@ A **personal** cross-platform management app for controlling and monitoring the 
 - Token request: `/token/request` → `{id, expires_in:120}` (429 if another request is pending, 503 if notifications are disabled); poll `/token/status?id=` → `pending | denied | expired | approved{token}`. The token is delivered exactly once.
 - `/token/set?new=` requires the current token; 401 invalid token, 409 no token set, 400 invalid `new` (alphanumeric, 24–128 chars).
 
+### 3.1 Observed on the test device (2026-10-07)
+
+- `/location` → `ERR no-fix (no known position; is location turned on?)` as `text/plain`, HTTP 200.
+- `/display` → `rotation` is a **string** (`"0"`); `refreshHz` is a double.
+- `/displays` → plain text `0:0` (one `id:state` line per display).
+- `/volume` read → `{"media":{"level":0,"max":15},…,"call":{"level":4,"max":5}}`; `/sensors` → array of `{name,type(int),vendor,power,max}`.
+- `/token/set` without a token → HTTP 409 `{"error":"no token set; use /token/request"}`; unknown path → HTTP 404 `not found`.
+- `/stream` → `multipart/x-mixed-replace; boundary=rigframe`, parts are `--rigframe\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<jpeg>`; HTTP/1.0, `Connection: close`.
+
 ## 4. Architecture
 
 ```
@@ -63,7 +72,7 @@ Dependencies point downward only. The UI never calls `dio` directly.
 main.dart, app.dart                  # ProviderScope, MaterialApp.router, theme, MediaKit.ensureInitialized()
 core/
   api/husk_api.dart                  # one method per endpoint, token injection, error mapping
-  api/husk_exception.dart            # sealed: Offline, Unauthorized, HttpStatusError(code, body)
+  api/husk_exception.dart            # sealed: Offline, Unauthorized, HttpStatusError(code, body), DeviceError(message)
   api/models/                        # DeviceInfo, Flags, Battery, Connectivity, DisplayInfo, Location,
                                      # MicLevel, Sensor, SensorReading, Volumes, MotionConfig,
                                      # MotionEvent, WdInfo, PairInfo, TokenRequest, TokenStatus
@@ -86,7 +95,7 @@ shared/widgets/   # StatusDot, BatteryIndicator, ServiceChip, ConfirmDialog, Res
 
 ### 4.2 Packages
 
-`flutter_riverpod`, `go_router`, `dio`, `shared_preferences`, `uuid`, `media_kit`, `media_kit_video`, `media_kit_libs_video`, `flutter_inappwebview`, `network_info_plus`, `file_selector` (desktop save), `share_plus` (mobile share), `url_launcher` (open maps). Dev: `flutter_test`, `mocktail`, and a small hand-written fake `HttpClientAdapter` for dio tests (no extra mock-adapter package).
+`flutter_riverpod`, `go_router`, `dio`, `shared_preferences`, `uuid`, `media_kit`, `media_kit_video`, `media_kit_libs_video`, `flutter_inappwebview`, `network_info_plus`, `file_selector` (desktop save), `share_plus` (mobile share), `url_launcher` (open maps), `package_info_plus` (About version). Dev: `flutter_test`, `mocktail`, and a small hand-written fake `HttpClientAdapter` for dio tests (no extra mock-adapter package).
 
 ### 4.3 Data model (persisted)
 
@@ -117,7 +126,8 @@ Stored as JSON under the `servers.v1` and `settings.v1` keys in `shared_preferen
 - `HuskApi` throws a `HuskException`:
   - `Offline`: connection refused or timeout; connect timeout 3 s, receive timeout 10 s for non-stream calls.
   - `Unauthorized`: 401.
-  - `HttpStatusError(code, body)`: any other non-2xx status.
+  - `HttpStatusError(code, body)`: any other non-2xx status; the message is taken from a JSON `{"error": …}` body when present.
+  - `DeviceError(message)`: a JSON endpoint answered plain text such as `ERR no-fix …` under HTTP 200 (observed live on `/location`).
 - Plain-text `ERR …` / `NONE` responses are returned as a `TextResult` (raw string plus `isOk` / `isNone` / `isErr` helpers) and displayed, not thrown.
 - UI messages:
   - 401: "Token missing or invalid. Edit the server or request a token."
@@ -201,7 +211,7 @@ Cards (each loads independently; all load in parallel when the tab opens; pull-t
 - **Battery** (`/battery`): level, charging, status, health, plugged, temperature °C, voltage mV, technology.
 - **Connectivity** (`/connectivity`): connected, type, metered, validated.
 - **Display** (`/display`): width × height, densityDpi, density, refresh Hz, rotation.
-- **Location** (`/location`): lat/lon, accuracy, altitude, time, provider, and an "Open in maps" link via `url_launcher`. An `ERR` reply shows "Location permission not granted on the phone".
+- **Location** (`/location`): lat/lon, accuracy, altitude, time, provider, and an "Open in maps" link via `url_launcher`. An `ERR` reply (e.g. `ERR no-fix (no known position; is location turned on?)`) is shown verbatim, since the phone's message names the actual cause.
 - **Quick controls:**
   - Torch: switch, `/torch?on=1|0`; shows the error if the camera is busy.
   - Vibrate: ms field (1–10000, default 300) and a button, `/vibrate?ms=`.
@@ -311,7 +321,7 @@ All query parameters are passed via dio `queryParameters` (URL-encoded).
   - `NSLocalNetworkUsageDescription`.
   - Location-when-in-use description, only if `network_info_plus` requires it for Wi-Fi IP.
 - **macOS:**
-  - `com.apple.security.network.client` in both `DebugProfile.entitlements` and `Release.entitlements`.
+  - `com.apple.security.network.client` and `com.apple.security.files.user-selected.read-write` (snapshot save dialog) in both `DebugProfile.entitlements` and `Release.entitlements`.
   - The same ATS keys as iOS.
 - **Windows:** no special configuration; the WebView2 runtime is assumed.
 
