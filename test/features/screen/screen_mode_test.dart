@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huskconfig/core/storage/app_settings.dart';
 import 'package:huskconfig/features/screen/screen_mode.dart';
@@ -19,5 +20,14 @@ void main() {
     expect(availableScreenModes(h264Supported: true, h264Failed: false), {ScreenMode.mjpeg, ScreenMode.h264, ScreenMode.webview});
     expect(availableScreenModes(h264Supported: false, h264Failed: false), {ScreenMode.mjpeg, ScreenMode.webview});
     expect(availableScreenModes(h264Supported: true, h264Failed: true), {ScreenMode.mjpeg, ScreenMode.webview});
+  });
+
+  // Values from docs/superpowers/spikes/2026-10-07-h264-media-kit.md.
+  test('H.264 platforms match the spike findings (H264_PLATFORMS: macos,android)', () {
+    expect(h264Platforms, {TargetPlatform.macOS, TargetPlatform.android});
+  });
+
+  test('catch-up seek is off (CATCH_UP_SEEK: off): with cache=no mpv reads at most ~1 s ahead, so a >2 s gap never occurs', () {
+    expect(h264CatchUpSeek, isFalse);
   });
 }
