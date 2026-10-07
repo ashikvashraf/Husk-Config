@@ -18,6 +18,14 @@ import 'input_controls.dart';
 import 'input_queue.dart';
 import 'screen_mode.dart';
 
+/// Size of one display, keyed by (server id, display id). Display 0 uses the
+/// shared [displayInfoProvider].
+final _displaySizeProvider = FutureProvider.autoDispose.family<DisplayInfo, (String, int)>((ref, key) {
+  final (id, display) = key;
+  if (display == 0) return ref.watch(displayInfoProvider(id).future);
+  return ref.watch(apiProvider(id)).display(display: display);
+});
+
 String _modeLabel(ScreenMode mode) => switch (mode) {
       ScreenMode.mjpeg => 'MJPEG',
       ScreenMode.h264 => 'H.264',
@@ -41,7 +49,11 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
   void _showInputError(Object error) {
     if (!mounted) return;
     final message = describeError(error);
-    final hint = message.contains('cancelled') ? ' Screen may be off — press Wake.' : '';
+    final hint = message.contains('cancelled')
+        ? ' Screen may be off — press Wake.'
+        : message.contains('ime-needs-api30')
+            ? ' Typing needs Android 11 or newer on the phone.'
+            : '';
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$message$hint')));
   }
 
@@ -59,7 +71,8 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
         child: child,
       );
 
-  /// The live view for [mode]. [display] is the phone's pixel size from /display.
+  /// The live view for [mode] on the selected display. [display] is that
+  /// display's pixel size from /display.
   Widget _modeView(ScreenMode mode, HuskApi api, AsyncValue<DisplayInfo> display) {
     final info = display.value;
     if (info == null) {
@@ -68,7 +81,12 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     }
     final deviceSize = Size(info.width.toDouble(), info.height.toDouble());
     return switch (mode) {
-      ScreenMode.mjpeg || ScreenMode.h264 || ScreenMode.webview => _interactive(api, deviceSize, MjpegView(api: api, path: '/screen')),
+      ScreenMode.mjpeg || ScreenMode.h264 || ScreenMode.webview => _interactive(
+          api,
+          deviceSize,
+          // A new key and path per display so the stream reconnects on the picked one.
+          MjpegView(key: ValueKey('screen-$_display'), api: api, path: _display == 0 ? '/screen' : '/screen?d=$_display'),
+        ),
     };
   }
 
@@ -151,7 +169,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     final id = widget.serverId;
     final api = ref.watch(apiProvider(id));
     final flags = ref.watch(flagsProvider(id));
-    final display = ref.watch(displayInfoProvider(id));
+    final display = ref.watch(_displaySizeProvider((id, _display)));
     final displays = ref.watch(displaysProvider(id)).value ?? const [DisplayEntry(id: 0, raw: '0')];
     final available = availableScreenModes();
     final mode = effectiveScreenMode(

@@ -52,6 +52,14 @@ void main() {
     expect((d.width, d.height, d.rotation, d.densityDpi), (1080, 2112, 0, 360));
   });
 
+  test('display() sends d only for a non-default display', () async {
+    final f = fakeApi((_) => jsonBody(displayJson));
+    await f.api.display();
+    expect(f.adapter.last.uri.queryParameters.containsKey('d'), isFalse);
+    await f.api.display(display: 1);
+    expect(f.adapter.last.uri.queryParameters['d'], '1');
+  });
+
   test('connectivity()', () async {
     final c = await fakeApi((_) => jsonBody('{"connected":true,"type":"wifi","metered":false,"validated":true}')).api.connectivity();
     expect((c.connected, c.type, c.metered, c.validated), (true, 'wifi', false, true));

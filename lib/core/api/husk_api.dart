@@ -71,7 +71,9 @@ class HuskApi {
 
   Future<ConnectivityInfo> connectivity() async => ConnectivityInfo.fromJson(await _map('/connectivity'));
 
-  Future<DisplayInfo> display() async => DisplayInfo.fromJson(await _map('/display'));
+  /// Size and rotation of [display] (default display 0; `d` is sent only for other displays).
+  Future<DisplayInfo> display({int display = 0}) async =>
+      DisplayInfo.fromJson(await _map('/display', query: {'d': display == 0 ? null : display}));
 
   Future<LocationInfo> location() async => LocationInfo.fromJson(await _map('/location'));
 
