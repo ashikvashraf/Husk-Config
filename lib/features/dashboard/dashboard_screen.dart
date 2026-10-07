@@ -6,11 +6,35 @@ import '../servers/servers_controller.dart';
 import 'server_card.dart';
 import 'server_status.dart';
 
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  bool? _reported;
+
+  /// Tells the status providers whether this screen is the topmost route.
+  /// Reported after the frame because providers must not change during build.
+  void _reportVisibility() {
+    final visible = ModalRoute.of(context)?.isCurrent ?? true;
+    if (visible == _reported) return;
+    _reported = visible;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(dashboardVisibleProvider.notifier).set(_reported ?? true);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reportVisibility();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final servers = ref.watch(serversProvider);
     return Scaffold(
       appBar: AppBar(
