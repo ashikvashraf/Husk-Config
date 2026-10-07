@@ -142,11 +142,91 @@ class HuskApi {
     return (contentType: response.headers.value(Headers.contentTypeHeader) ?? '', stream: stream);
   }
 
+  Future<TextResult> setCamera({int? rotation, bool? flip, bool? front, int? fps, int? screenQuality, int? screenFps}) =>
+      _command('/set', query: {'rot': rotation, 'flip': flip, 'front': front, 'fps': fps, 'sq': screenQuality, 'sfps': screenFps});
+
+  // ----------------------------------------------------------------- Input
+
+  Future<TextResult> wake() => _command('/wake');
+
+  Future<TextResult> tap(int x, int y, {int display = 0, int? ms}) =>
+      _command('/tap', query: {'x': x, 'y': y, 'd': display, 'ms': ms});
+
+  Future<TextResult> swipe(int x1, int y1, int x2, int y2, {int display = 0, int? ms}) =>
+      _command('/swipe', query: {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2, 'd': display, 'ms': ms});
+
+  Future<TextResult> key(NavKey key) => _command('/key', query: {'k': key.name});
+
+  Future<TextResult> click(String match, {int display = 0}) => _command('/click', query: {'match': match, 'd': display});
+
+  /// Replaces the focused field's whole content (newlines are stripped by Husk).
+  Future<TextResult> typeText(String text) => _command('/text', query: {'t': text});
+
   // --------------------------------------------------- Inspection & generic
 
   Future<String> dump({int display = 0}) => _text('/dump', query: {'d': display}, receiveTimeout: _slow);
 
   Future<String> rpc(String command) => _text('/rpc', query: {'cmd': command}, receiveTimeout: _slow);
+
+  Future<({int x, int y})?> find(String match, {int display = 0}) async {
+    final r = await _command('/find', query: {'match': match, 'd': display});
+    if (r.isNone) return null;
+    if (r.isErr) throw DeviceErrorException(r.text);
+    final parts = r.text.split(RegExp(r'\s+'));
+    final x = int.tryParse(parts.first);
+    final y = parts.length > 1 ? int.tryParse(parts[1]) : null;
+    if (x == null || y == null) throw DeviceErrorException('Unexpected response: ${r.text}');
+    return (x: x, y: y);
+  }
+
+  Future<String?> getText(String match, {int display = 0}) async {
+    final r = await _command('/gettext', query: {'match': match, 'd': display});
+    if (r.isNone) return null;
+    if (r.isErr) throw DeviceErrorException(r.text);
+    return r.text;
+  }
+
+  Future<bool> exists(String match, {int display = 0}) async {
+    final r = await _command('/exists', query: {'match': match, 'd': display});
+    if (r.isErr) throw DeviceErrorException(r.text);
+    return r.text == '1';
+  }
+
+  Future<TextResult> scroll({int display = 0, bool forward = true}) =>
+      _command('/scroll', query: {'d': display, 'dir': forward ? 'fwd' : 'back'});
+
+  // ------------------------------------------------------------ Navigation
+
+  Future<TextResult> launch({required String action, String? data, String? package, int display = 0}) =>
+      _command('/launch', query: {'action': action, 'data': data, 'pkg': package, 'd': display});
+
+  // ------------------------------------------------------- Token & control
+
+  /// Requires the current token; 409 when no token is set, 400 for an invalid one.
+  Future<void> setToken(String newToken) async {
+    await _text('/token/set', query: {'new': newToken});
+  }
+
+  Future<TextResult> devOptions({bool probe = false}) =>
+      _command('/devoptions', query: {'probe': probe ? true : null}, receiveTimeout: _slow);
+
+  // ------------------------------------------------------ Hardware setters
+
+  Future<TextResult> torch({required bool on}) => _command('/torch', query: {'on': on});
+
+  Future<TextResult> vibrate({int? ms}) => _command('/vibrate', query: {'ms': ms});
+
+  Future<TextResult> setVolume(String stream, int level) => _command('/volume', query: {'stream': stream, 'level': level});
+
+  Future<TextResult> setRinger(String mode) => _command('/ringer', query: {'mode': mode});
+
+  Future<TextResult> setBrightness(int level) => _command('/brightness', query: {'level': level});
+
+  /// An empty [topic] is sent as-is: it means "log to /events only, no push".
+  Future<void> setMotion({bool? enabled, String? topic, String? server, int? sensitivity}) async {
+    final r = await _command('/motion', query: {'on': enabled, 'topic': topic, 'server': server, 'sensitivity': sensitivity});
+    if (r.isErr) throw DeviceErrorException(r.text);
+  }
 
   // ------------------------------------------------------------- Plumbing
 
@@ -200,7 +280,6 @@ class HuskApi {
     return body;
   }
 
-  // ignore: unused_element
   Future<TextResult> _command(String path, {Map<String, Object?> query = const {}, Duration? receiveTimeout}) async =>
       TextResult(await _text(path, query: query, receiveTimeout: receiveTimeout));
 
