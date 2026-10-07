@@ -8,7 +8,7 @@ final server1 = ServerConfig(id: 's1', name: 'Kitchen phone', host: '192.168.0.1
 DeviceInfo deviceInfoFixture({int battery = 87, bool charging = false}) => DeviceInfo.fromJson(jsonDecode(
       '{"app":{"package":"co.xplat.husk","versionName":"1.4","versionCode":"55"},'
       '"device":{"manufacturer":"samsung","model":"SM-A750F","androidRelease":"10","sdkInt":29,"dexCapable":false,"hasCamera":true},'
-      '"screen":{"width":1080,"height":2112},"net":{"localIp":"192.168.0.106","tailscaleIp":null},'
+      '"screen":{"width":1080,"height":2220},"net":{"localIp":"192.168.0.106","tailscaleIp":null},'
       '"battery":{"level":$battery,"charging":$charging},"services":{"a11y":true,"camera":true,"screen":false,"dexReconnect":false}}',
     ) as Map<String, Object?>);
 

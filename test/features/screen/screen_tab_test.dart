@@ -62,11 +62,11 @@ void main() {
     expect(find.byType(GestureLayer), findsNothing);
   });
 
-  testWidgets('a tap on the screen view taps the phone', (tester) async {
+  testWidgets('before the first frame a tap maps onto the /info screen size', (tester) async {
     await pump(tester, screenSharing: true);
     await tester.tap(find.byType(GestureLayer));
     await tester.pumpAndSettle();
-    verify(() => api.tap(540, 1056, display: 0)).called(1);
+    verify(() => api.tap(540, 1110, display: 0)).called(1);
   });
 
   testWidgets('nav bar Home sends /key?k=home', (tester) async {
@@ -122,21 +122,13 @@ void main() {
     expect(find.text('H.264'), findsNothing);
   });
 
-  testWidgets('a rotated frame re-reads /display and maps taps with the rotated size', (tester) async {
-    final frames = StreamController<Uint8List>();
-    addTearDown(frames.close);
-    await pump(tester, screenSharing: true, frames: frames);
-    var reads = 0;
-    when(() => api.display()).thenAnswer((_) async {
-      reads++;
-      return DisplayInfo.fromJson({'width': 2112, 'height': 1080, 'densityDpi': 360, 'density': 2.25, 'refreshHz': 60.0, 'rotation': '1'});
-    });
-
-    // The phone turned to landscape: the next MJPEG frame is wider than tall.
+  /// Sends one solid PNG frame of [width] x [height] down the MJPEG stream and
+  /// waits until the view has decoded it.
+  Future<void> sendFrame(WidgetTester tester, StreamController<Uint8List> frames, int width, int height) async {
     final png = (await tester.runAsync(() async {
       final recorder = ui.PictureRecorder();
-      ui.Canvas(recorder).drawRect(const Rect.fromLTWH(0, 0, 200, 100), Paint());
-      final image = await recorder.endRecording().toImage(200, 100);
+      ui.Canvas(recorder).drawRect(Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()), Paint());
+      final image = await recorder.endRecording().toImage(width, height);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
       return data!.buffer.asUint8List();
@@ -152,18 +144,53 @@ void main() {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     }
     await tester.pumpAndSettle();
+  }
 
-    expect(reads, 1);
-    await tester.tap(find.byType(GestureLayer));
+  /// Where a [frame]-sized image is drawn (BoxFit.contain) inside the gesture layer.
+  Rect drawnFrame(WidgetTester tester, Size frame) {
+    final layer = tester.getRect(find.byType(GestureLayer));
+    final fitted = applyBoxFit(BoxFit.contain, frame, layer.size).destination;
+    return Alignment.center.inscribe(fitted, layer);
+  }
+
+  testWidgets('taps map onto the full-screen frame being drawn, not the /display size', (tester) async {
+    // Real phone: /display 1080x2112 leaves out the nav bar; /info and the frames are the full 1080x2220.
+    final frames = StreamController<Uint8List>();
+    addTearDown(frames.close);
+    await pump(tester, screenSharing: true, frames: frames);
+    await sendFrame(tester, frames, 720, 1480);
+
+    final image = drawnFrame(tester, const Size(720, 1480));
+    expect(image.width, lessThan(tester.getSize(find.byType(GestureLayer)).width)); // The view does not match the frame.
+
+    await tester.tapAt(image.center);
     await tester.pumpAndSettle();
-    verify(() => api.tap(1056, 540, display: 0)).called(1);
+    verify(() => api.tap(540, 1110, display: 0)).called(1);
+
+    // The nav bar strip at the very bottom is reachable.
+    await tester.tapAt(Offset(image.center.dx, image.bottom - 0.25));
+    await tester.pumpAndSettle();
+    final y = verify(() => api.tap(540, captureAny(), display: 0)).captured.single as int;
+    expect(y, closeTo(2219, 1));
   });
-  test('orientedDeviceSize follows the frame orientation until /display catches up', () {
-    const portrait = Size(1080, 2112);
-    expect(orientedDeviceSize(portrait, null), portrait);
-    expect(orientedDeviceSize(portrait, const Size(540, 1056)), portrait);
-    expect(orientedDeviceSize(portrait, const Size(1056, 540)), const Size(2112, 1080));
-    expect(orientedDeviceSize(const Size(2112, 1080), const Size(1056, 540)), const Size(2112, 1080));
-    expect(orientedDeviceSize(portrait, const Size(500, 500)), portrait);
+
+  testWidgets('a rotated frame maps taps onto the rotated full screen', (tester) async {
+    final frames = StreamController<Uint8List>();
+    addTearDown(frames.close);
+    await pump(tester, screenSharing: true, frames: frames);
+    var reads = 0;
+    when(() => api.display()).thenAnswer((_) async {
+      reads++;
+      return DisplayInfo.fromJson({'width': 2112, 'height': 1080, 'densityDpi': 360, 'density': 2.25, 'refreshHz': 60.0, 'rotation': '1'});
+    });
+
+    // The phone turned to landscape: the next MJPEG frame is wider than tall.
+    await sendFrame(tester, frames, 148, 72);
+
+    // The frame alone gives the rotated geometry, so /display is not re-read.
+    expect(reads, 0);
+    await tester.tapAt(drawnFrame(tester, const Size(148, 72)).center);
+    await tester.pumpAndSettle();
+    verify(() => api.tap(1110, 540, display: 0)).called(1);
   });
 }

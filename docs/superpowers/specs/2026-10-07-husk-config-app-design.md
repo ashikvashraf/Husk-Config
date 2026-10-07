@@ -47,6 +47,7 @@ A **personal** cross-platform management app for controlling and monitoring the 
 
 - `/location` → `ERR no-fix (no known position; is location turned on?)` as `text/plain`, HTTP 200.
 - `/display` → `rotation` is a **string** (`"0"`); `refreshHz` is a double.
+- `/display` 1080x2112 excludes the 108 px nav bar; `/info` screen and the `/screen` and `/screen.mp4` frames are the full 1080x2220.
 - `/displays` → plain text `0:0` (one `id:state` line per display).
 - `/volume` read → `{"media":{"level":0,"max":15},…,"call":{"level":4,"max":5}}`; `/sensors` → array of `{name,type(int),vendor,power,max}`.
 - `/token/set` without a token → HTTP 409 `{"error":"no token set; use /token/request"}`; unknown path → HTTP 404 `not found`.
@@ -253,7 +254,7 @@ Cards (each loads independently; all load in parallel when the tab opens; pull-t
 - **Keyboard panel:** text field with "Send text" (`/text?t=`; replaces the field's whole content, newlines stripped) and "Enter" (`/key?k=enter`). The `ERR ime-needs-api30` reply shows a hint.
 
 **Gesture layer** (shared by MJPEG and H.264):
-- Device size comes from `/display` (rotation-aware width/height).
+- Device size follows the frame actually drawn, not `/display`. Observed: `/display` (1080×2112 on the test phone) leaves out the 108 px nav bar, while `/info` `screen` and the `/screen` and `/screen.mp4` frames (720×1480) cover the full 1080×2220 screen that `/tap` and `/swipe` use. Rule: MJPEG and H.264 views report their decoded frame size; device size = frame size × (long side of `/info` screen ÷ long side of the frame), so 720×1480 → 1080×2220 and a rotated 1480×720 → 2220×1080 (a rotated frame rotates the mapping by itself). Before the first frame, the `/info` screen size turned to `/display`'s orientation is used. Without an `/info` screen size (and on displays other than 0) the frame is scaled by `/display`'s short side, never by its height; with neither a frame nor `/info`, `/display` is used as is.
 - The video is rendered with `BoxFit.contain`. `CoordinateMapper` converts a local position to device pixels: `devX = (localX − offX) / renderedW × deviceW`, and the same for Y. Points in letterbox bars are ignored.
 - Gesture → endpoint:
   - Tap: `/tap?x&y&d`.
