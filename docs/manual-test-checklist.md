@@ -13,6 +13,9 @@ Status: INCOMPLETE. The interactive checklist below was NOT executed. It needs a
 | `flutter build windows` | not run (no Windows machine) |
 | Android on a device | not run (no adb device attached) |
 
+## Step 4 disposition (fix round 3)
+Step 4 (run `flutter run -d macos`/Android and tick each Safe item against the phone) is BLOCKED in the automated environment: no human to drive the GUI or approve phone actions, no adb device (`adb devices` lists none), and no Android/macOS interactive session. Re-checked this round: `flutter test --reporter expanded` over the covering suites -> `+92: All tests passed!`. The only attached flutter device is an unrelated wireless iPhone, which was not used. Recorded results are therefore: automated (fakes) per item above, manual not run. Whoever runs the manual pass should replace each "Manual: not run" with a tick and a note.
+
 Device under test: `192.168.0.106:8090` (SM-A750F, Android 10, Husk 1.4).
 Fill each line with ✅ / ❌ / n/a and a note. Platforms: macOS · Android · iOS · Windows.
 
