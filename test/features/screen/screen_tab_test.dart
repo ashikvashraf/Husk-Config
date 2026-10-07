@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -23,7 +25,12 @@ void main() {
 
   setUpAll(() => registerFallbackValue(CancelToken()));
 
-  Future<void> pump(WidgetTester tester, {required bool screenSharing, bool secondDisplay = false}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    required bool screenSharing,
+    bool secondDisplay = false,
+    StreamController<Uint8List>? frames,
+  }) async {
     api = MockHuskApi();
     stubOverview(api, screenSharing: screenSharing);
     if (secondDisplay) {
@@ -33,7 +40,7 @@ void main() {
           DisplayInfo.fromJson({'width': 720, 'height': 1280, 'densityDpi': 240, 'density': 1.5, 'refreshHz': 60.0, 'rotation': '0'}));
     }
     when(() => api.openMultipart(any(), cancelToken: any(named: 'cancelToken'))).thenAnswer((_) async =>
-        (contentType: 'multipart/x-mixed-replace; boundary=rigframe', stream: StreamController<Uint8List>().stream));
+        (contentType: 'multipart/x-mixed-replace; boundary=rigframe', stream: (frames ?? StreamController<Uint8List>()).stream));
     when(() => api.tap(any(), any(), display: any(named: 'display'), ms: any(named: 'ms')))
         .thenAnswer((_) async => const TextResult('OK'));
     when(() => api.key(any())).thenAnswer((_) async => const TextResult('OK'));
@@ -113,5 +120,50 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('H.264'), findsNothing);
+  });
+
+  testWidgets('a rotated frame re-reads /display and maps taps with the rotated size', (tester) async {
+    final frames = StreamController<Uint8List>();
+    addTearDown(frames.close);
+    await pump(tester, screenSharing: true, frames: frames);
+    var reads = 0;
+    when(() => api.display()).thenAnswer((_) async {
+      reads++;
+      return DisplayInfo.fromJson({'width': 2112, 'height': 1080, 'densityDpi': 360, 'density': 2.25, 'refreshHz': 60.0, 'rotation': '1'});
+    });
+
+    // The phone turned to landscape: the next MJPEG frame is wider than tall.
+    final png = (await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawRect(const Rect.fromLTWH(0, 0, 200, 100), Paint());
+      final image = await recorder.endRecording().toImage(200, 100);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      return data!.buffer.asUint8List();
+    }))!;
+    frames.add(Uint8List.fromList([
+      ...ascii.encode('--rigframe\r\nContent-Type: image/png\r\nContent-Length: ${png.length}\r\n\r\n'),
+      ...png,
+      ...ascii.encode('\r\n--rigframe\r\n'),
+    ]));
+    // Let the parser deliver the frame and the engine decode it (real async work).
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    }
+    await tester.pumpAndSettle();
+
+    expect(reads, 1);
+    await tester.tap(find.byType(GestureLayer));
+    await tester.pumpAndSettle();
+    verify(() => api.tap(1056, 540, display: 0)).called(1);
+  });
+  test('orientedDeviceSize follows the frame orientation until /display catches up', () {
+    const portrait = Size(1080, 2112);
+    expect(orientedDeviceSize(portrait, null), portrait);
+    expect(orientedDeviceSize(portrait, const Size(540, 1056)), portrait);
+    expect(orientedDeviceSize(portrait, const Size(1056, 540)), const Size(2112, 1080));
+    expect(orientedDeviceSize(const Size(2112, 1080), const Size(1056, 540)), const Size(2112, 1080));
+    expect(orientedDeviceSize(portrait, const Size(500, 500)), portrait);
   });
 }

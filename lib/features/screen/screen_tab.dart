@@ -29,6 +29,14 @@ final _displaySizeProvider = FutureProvider.autoDispose.family<DisplayInfo, (Str
   return ref.watch(apiProvider(id)).display(display: display);
 });
 
+bool _landscape(Size size) => size.width > size.height;
+
+/// [device] (from /display) turned to match the live frame's orientation. /display
+/// is rotation-aware, but it is only re-read after a frame shows the phone
+/// rotated; until that answer arrives the frame's orientation wins.
+Size orientedDeviceSize(Size device, Size? frame) =>
+    frame != null && frame.width != frame.height && _landscape(frame) != _landscape(device) ? device.flipped : device;
+
 String _modeLabel(ScreenMode mode) => switch (mode) {
       ScreenMode.mjpeg => 'MJPEG',
       ScreenMode.h264 => 'H.264',
@@ -50,6 +58,33 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
   bool _fullscreenOpen = false;
   bool _h264Failed = false;
 
+  /// Pixel size of the latest frame on the selected display (MJPEG or H.264).
+  final _frameSize = ValueNotifier<Size?>(null);
+
+  @override
+  void dispose() {
+    _frameSize.dispose();
+    super.dispose();
+  }
+
+  /// When the live frame turns between portrait and landscape, the phone was
+  /// rotated: re-read /display so taps map onto the rotated size.
+  void _onFrameSize(Size size) {
+    if (!mounted) return;
+    final previous = _frameSize.value;
+    _frameSize.value = size;
+    if (previous != null && _landscape(previous) == _landscape(size)) return;
+    if (size.width == size.height) return;
+    final id = widget.serverId;
+    final info = ref.read(_displaySizeProvider((id, _display))).value;
+    if (info == null || _landscape(Size(info.width.toDouble(), info.height.toDouble())) == _landscape(size)) return;
+    if (_display == 0) {
+      ref.invalidate(displayInfoProvider(id));
+    } else {
+      ref.invalidate(_displaySizeProvider((id, _display)));
+    }
+  }
+
   void _showInputError(Object error) {
     if (!mounted) return;
     final message = describeError(error);
@@ -65,14 +100,18 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  Widget _interactive(HuskApi api, Size deviceSize, Widget child) => GestureLayer(
-        deviceSize: deviceSize,
-        onTap: (p) => _queue.add(() => api.tap(p.x, p.y, display: _display)),
-        onLongPress: (p) => _queue.add(() => api.tap(p.x, p.y, display: _display, ms: 600)),
-        onSwipe: (a, b, d) => _queue.add(() => api.swipe(a.x, a.y, b.x, b.y, display: _display, ms: d.inMilliseconds)),
-        onScroll: (forward) => _queue.add(() => api.scroll(display: _display, forward: forward)),
-        onKey: (key) => _queue.add(() => api.key(key)),
+  Widget _interactive(HuskApi api, Size deviceSize, Widget child) => ValueListenableBuilder<Size?>(
+        valueListenable: _frameSize,
         child: child,
+        builder: (context, frame, child) => GestureLayer(
+          deviceSize: orientedDeviceSize(deviceSize, frame),
+          onTap: (p) => _queue.add(() => api.tap(p.x, p.y, display: _display)),
+          onLongPress: (p) => _queue.add(() => api.tap(p.x, p.y, display: _display, ms: 600)),
+          onSwipe: (a, b, d) => _queue.add(() => api.swipe(a.x, a.y, b.x, b.y, display: _display, ms: d.inMilliseconds)),
+          onScroll: (forward) => _queue.add(() => api.scroll(display: _display, forward: forward)),
+          onKey: (key) => _queue.add(() => api.key(key)),
+          child: child!,
+        ),
       );
 
   /// The live view for [mode] on the selected display. [display] is that
@@ -90,7 +129,12 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
           api,
           deviceSize,
           // A new key and path per display so the stream reconnects on the picked one.
-          MjpegView(key: ValueKey('screen-$_display'), api: api, path: _display == 0 ? '/screen' : '/screen?d=$_display'),
+          MjpegView(
+            key: ValueKey('screen-$_display'),
+            api: api,
+            path: _display == 0 ? '/screen' : '/screen?d=$_display',
+            onFrameSize: _onFrameSize,
+          ),
         ),
       ScreenMode.h264 => _interactive(
           api,
@@ -98,6 +142,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
           H264View(
             uri: api.uri('/screen.mp4'),
             catchUpSeek: h264CatchUpSeek,
+            onVideoSize: _onFrameSize,
             onFailed: (message) {
               if (!mounted || _h264Failed) return;
               setState(() => _h264Failed = true);
@@ -157,7 +202,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     }
   }
 
-  Future<void> _openFullscreen(ScreenMode mode, HuskApi api, AsyncValue<DisplayInfo> display) async {
+  Future<void> _openFullscreen(ScreenMode mode, HuskApi api) async {
     setState(() => _fullscreenOpen = true); // Avoid two streams while the route is on top.
     await Navigator.of(context).push(MaterialPageRoute<void>(
       fullscreenDialog: true,
@@ -165,7 +210,12 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
         backgroundColor: Colors.black,
         body: SafeArea(
           child: Stack(children: [
-            Positioned.fill(child: _modeView(mode, api, display)),
+            // Watch /display here too, so a re-read after a rotation reaches this route.
+            Positioned.fill(
+              child: Consumer(
+                builder: (context, ref, _) => _modeView(mode, api, ref.watch(_displaySizeProvider((widget.serverId, _display)))),
+              ),
+            ),
             Positioned(
               top: 8,
               right: 8,
@@ -239,14 +289,17 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
             items: [
               for (final d in displayIds) DropdownMenuItem(value: d, child: Text(d == 0 ? 'Phone (display 0)' : 'Display $d')),
             ],
-            onChanged: (v) => setState(() => _display = v ?? 0),
+            onChanged: (v) {
+              _frameSize.value = null; // The next frame comes from the newly picked display.
+              setState(() => _display = v ?? 0);
+            },
           ),
           IconButton(tooltip: 'Screenshot', icon: const Icon(Icons.screenshot_monitor), onPressed: () => _screenshot(api)),
           IconButton(tooltip: 'Stream quality', icon: const Icon(Icons.high_quality), onPressed: () => _quality(api)),
           IconButton(
             tooltip: 'Fullscreen',
             icon: const Icon(Icons.fullscreen),
-            onPressed: () => _openFullscreen(mode, api, display),
+            onPressed: () => _openFullscreen(mode, api),
           ),
         ]),
       ),

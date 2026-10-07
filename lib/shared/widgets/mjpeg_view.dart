@@ -16,12 +16,22 @@ import '../../core/stream/mjpeg_stream.dart';
 /// (1, 2, 4, 8, 10 s), drops frames that arrive while one is still decoding,
 /// and disconnects while the app is in the background or the widget is gone.
 class MjpegView extends ConsumerStatefulWidget {
-  const MjpegView({super.key, required this.api, required this.path, this.fit = BoxFit.contain, this.showFps = true});
+  const MjpegView({
+    super.key,
+    required this.api,
+    required this.path,
+    this.fit = BoxFit.contain,
+    this.showFps = true,
+    this.onFrameSize,
+  });
 
   final HuskApi api;
   final String path;
   final BoxFit fit;
   final bool showFps;
+
+  /// Called with a frame's pixel size whenever it differs from the previous frame's.
+  final ValueChanged<Size>? onFrameSize;
 
   @override
   ConsumerState<MjpegView> createState() => _MjpegViewState();
@@ -135,10 +145,14 @@ class _MjpegViewState extends ConsumerState<MjpegView> {
         return;
       }
       final old = _image;
+      final image = frame.image;
       setState(() {
-        _image = frame.image;
+        _image = image;
         _status = null;
       });
+      if (old == null || old.width != image.width || old.height != image.height) {
+        widget.onFrameSize?.call(Size(image.width.toDouble(), image.height.toDouble()));
+      }
       old?.dispose();
     } catch (_) {
       // A corrupt frame is skipped; the next one replaces it.

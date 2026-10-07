@@ -10,11 +10,14 @@ import 'latency_drift.dart';
 /// Calls [onFailed] on any player error, or when playback keeps drifting more
 /// than ~2 s behind the live edge, so the tab can fall back to MJPEG.
 class H264View extends StatefulWidget {
-  const H264View({super.key, required this.uri, required this.onFailed, this.catchUpSeek = true});
+  const H264View({super.key, required this.uri, required this.onFailed, this.catchUpSeek = true, this.onVideoSize});
 
   final Uri uri;
   final ValueChanged<String> onFailed;
   final bool catchUpSeek;
+
+  /// Called with the video's display size whenever mpv reports new video parameters.
+  final ValueChanged<Size>? onVideoSize;
 
   @override
   State<H264View> createState() => _H264ViewState();
@@ -25,6 +28,7 @@ class _H264ViewState extends State<H264View> {
   late final VideoController _controller = VideoController(_player);
   StreamSubscription<String>? _errors;
   StreamSubscription<Duration>? _positions;
+  StreamSubscription<VideoParams>? _videoParams;
   final _clock = Stopwatch();
   final _drift = LatencyDriftMonitor();
   Timer? _watchdog;
@@ -54,6 +58,10 @@ class _H264ViewState extends State<H264View> {
         if (!_clock.isRunning) _clock.start();
         if (_drift.sample(_clock.elapsed, position)) _fail('latency drifted past 2 s');
       });
+      _videoParams = _player.stream.videoParams.listen((p) {
+        final w = p.dw ?? p.w, h = p.dh ?? p.h;
+        if (!_disposed && w != null && h != null && w > 0 && h > 0) widget.onVideoSize?.call(Size(w.toDouble(), h.toDouble()));
+      });
       await _player.open(Media(widget.uri.toString()));
       if (_disposed) return;
       if (widget.catchUpSeek) {
@@ -80,6 +88,7 @@ class _H264ViewState extends State<H264View> {
     _watchdog?.cancel();
     _errors?.cancel();
     _positions?.cancel();
+    _videoParams?.cancel();
     _player.dispose();
     super.dispose();
   }
