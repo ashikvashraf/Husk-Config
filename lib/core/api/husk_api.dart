@@ -1,0 +1,173 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+
+import 'husk_exception.dart';
+import 'text_result.dart';
+
+/// Body of a streaming (MJPEG) response plus its Content-Type header.
+typedef MultipartResponse = ({String contentType, Stream<Uint8List> stream});
+
+/// Typed client for one Husk phone. Every endpoint is a GET with query
+/// parameters; the token travels as `?token=`.
+class HuskApi {
+  HuskApi({
+    required this.baseUrl,
+    this.token,
+    HttpClientAdapter? adapter,
+    Duration connectTimeout = const Duration(seconds: 3),
+    Duration receiveTimeout = const Duration(seconds: 10),
+  }) : _dio = Dio(BaseOptions(
+          baseUrl: baseUrl,
+          connectTimeout: connectTimeout,
+          receiveTimeout: receiveTimeout,
+          responseType: ResponseType.plain,
+          validateStatus: (_) => true,
+        )) {
+    if (adapter != null) _dio.httpClientAdapter = adapter;
+  }
+
+  /// For endpoints that drive the phone's UI (dump, rpc, management).
+  static const _slow = Duration(seconds: 30);
+
+  /// Maximum silence between chunks of a live stream before it is dropped.
+  static const _streamIdle = Duration(seconds: 15);
+
+  final String baseUrl;
+  final String? token;
+  final Dio _dio;
+
+  void close() => _dio.close(force: true);
+
+  /// Absolute URL for [path] with the token attached, for consumers that do
+  /// their own HTTP (media_kit, WebView).
+  Uri uri(String path, [Map<String, Object?> query = const {}]) {
+    final params = _params(query, auth: true);
+    return Uri.parse(baseUrl).replace(path: path, queryParameters: params.isEmpty ? null : params);
+  }
+
+  // ---------------------------------------------------------------- Status
+
+  Future<bool> healthz() async => (await _text('/healthz', auth: false)).trim() == 'ok';
+
+  // ------------------------------------------------------- Camera & screen
+
+  Future<Uint8List> snapshot() => _bytes('/snapshot');
+
+  Future<Uint8List> screenshot() => _bytes('/screen.jpg');
+
+  Future<MultipartResponse> openMultipart(String path, {CancelToken? cancelToken}) async {
+    final response = await _get<ResponseBody>(
+      path,
+      responseType: ResponseType.stream,
+      receiveTimeout: _streamIdle,
+      cancelToken: cancelToken,
+    );
+    final status = response.statusCode ?? 0;
+    final body = response.data;
+    if (body == null) throw HttpStatusException(status, '');
+    if (status < 200 || status >= 300) {
+      final bytes = await body.stream.fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
+      _check(status, utf8.decode(bytes, allowMalformed: true));
+    }
+    return (contentType: response.headers.value(Headers.contentTypeHeader) ?? '', stream: body.stream);
+  }
+
+  // --------------------------------------------------- Inspection & generic
+
+  Future<String> dump({int display = 0}) => _text('/dump', query: {'d': display}, receiveTimeout: _slow);
+
+  Future<String> rpc(String command) => _text('/rpc', query: {'cmd': command}, receiveTimeout: _slow);
+
+  // ------------------------------------------------------------- Plumbing
+
+  Map<String, String> _params(Map<String, Object?> query, {required bool auth}) {
+    final params = <String, String>{};
+    query.forEach((key, value) {
+      if (value == null) return;
+      params[key] = value is bool ? (value ? '1' : '0') : value.toString();
+    });
+    final t = token;
+    if (auth && t != null && t.isNotEmpty) params['token'] = t;
+    return params;
+  }
+
+  Future<Response<T>> _get<T>(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool auth = true,
+    ResponseType? responseType,
+    Duration? receiveTimeout,
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      return await _dio.get<T>(
+        path,
+        queryParameters: _params(query, auth: auth),
+        options: Options(responseType: responseType, receiveTimeout: receiveTimeout),
+        cancelToken: cancelToken,
+      );
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel) throw const OfflineException('Request cancelled');
+      throw OfflineException("Can't reach ${baseUrl.replaceFirst('http://', '')}");
+    }
+  }
+
+  void _check(int status, String body) {
+    if (status >= 200 && status < 300) return;
+    if (status == 401) throw const UnauthorizedException();
+    throw HttpStatusException(status, body);
+  }
+
+  Future<String> _text(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool auth = true,
+    Duration? receiveTimeout,
+  }) async {
+    final response = await _get<String>(path, query: query, auth: auth, receiveTimeout: receiveTimeout);
+    final body = response.data ?? '';
+    _check(response.statusCode ?? 0, body);
+    return body;
+  }
+
+  // ignore: unused_element
+  Future<TextResult> _command(String path, {Map<String, Object?> query = const {}, Duration? receiveTimeout}) async =>
+      TextResult(await _text(path, query: query, receiveTimeout: receiveTimeout));
+
+  /// Decodes a JSON body. Husk answers some JSON endpoints with plain text
+  /// (`ERR …`) under HTTP 200; that becomes a DeviceErrorException.
+  Future<Object?> _json(String path, {Map<String, Object?> query = const {}, bool auth = true, Duration? receiveTimeout}) async {
+    final body = (await _text(path, query: query, auth: auth, receiveTimeout: receiveTimeout)).trim();
+    if (body.startsWith('{') || body.startsWith('[')) {
+      try {
+        return jsonDecode(body);
+      } on FormatException {
+        throw DeviceErrorException('Unexpected response: $body');
+      }
+    }
+    throw DeviceErrorException(body.isEmpty ? 'Empty response' : body);
+  }
+
+  // ignore: unused_element
+  Future<Map<String, Object?>> _map(String path, {Map<String, Object?> query = const {}, bool auth = true, Duration? receiveTimeout}) async {
+    final value = await _json(path, query: query, auth: auth, receiveTimeout: receiveTimeout);
+    if (value is Map<String, Object?>) return value;
+    throw DeviceErrorException('Unexpected response from $path');
+  }
+
+  // ignore: unused_element
+  Future<List<Object?>> _list(String path, {Map<String, Object?> query = const {}}) async {
+    final value = await _json(path, query: query);
+    if (value is List<Object?>) return value;
+    throw DeviceErrorException('Unexpected response from $path');
+  }
+
+  Future<Uint8List> _bytes(String path) async {
+    final response = await _get<List<int>>(path, responseType: ResponseType.bytes);
+    final data = response.data ?? const <int>[];
+    _check(response.statusCode ?? 0, utf8.decode(data, allowMalformed: true));
+    return Uint8List.fromList(data);
+  }
+}
