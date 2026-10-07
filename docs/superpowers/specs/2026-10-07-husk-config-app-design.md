@@ -52,6 +52,7 @@ A **personal** cross-platform management app for controlling and monitoring the 
 - `/volume` read → `{"media":{"level":0,"max":15},…,"call":{"level":4,"max":5}}`; `/sensors` → array of `{name,type(int),vendor,power,max}`.
 - `/token/set` without a token → HTTP 409 `{"error":"no token set; use /token/request"}`; unknown path → HTTP 404 `not found`.
 - `/stream` → `multipart/x-mixed-replace; boundary=rigframe`, parts are `--rigframe\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<jpeg>`; HTTP/1.0, `Connection: close`.
+- Husk 1.4 camera side: `/set?front=1` sent 1-3 s after `/set?front=0`, while the phone is still restarting the camera, answers OK but is not applied (`/flags.front` stayed false for 15 s or more); the same `/set` sent after the camera settles applies.
 
 ## 4. Architecture
 
@@ -234,6 +235,7 @@ Cards (each loads independently; all load in parallel when the tab opens; pull-t
 - **Snapshot:** `/snapshot`. On 503, retry once after 1 s. Shows the full image with **Save** (desktop: `file_selector` save dialog; mobile: `share_plus`).
 - **Camera settings** (each change sends `/set`):
   - Side: front/back → `front=1|0`. On 409, show "This camera side doesn't exist on the device". The current side is read from `/flags.front`.
+  - Side switch confirm-and-retry: after `/set` returns OK, poll `/flags` every 500 ms for up to 5 s until `front` matches; if not, wait 2 s, send the `/set` once more and confirm again for up to 5 s; if still not, show "The phone did not switch cameras. Wait a few seconds and try again." and show what `/flags` reports. The side buttons are disabled with a "Switching…" spinner meanwhile; on success `/flags` is refreshed and the stream reconnects once.
   - Rotation: 0 / 90 / 180 / 270 → `rot`.
   - Horizontal flip → `flip=1|0`.
   - FPS cap → `fps`.

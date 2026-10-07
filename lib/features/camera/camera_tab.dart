@@ -9,12 +9,14 @@ import '../../shared/save_image.dart';
 import '../../shared/widgets/mjpeg_view.dart';
 import '../device/overview_providers.dart';
 import '../servers/api_provider.dart';
+import 'camera_side_switch.dart';
 import 'snapshot.dart';
 
 class CameraTab extends ConsumerStatefulWidget {
-  const CameraTab({super.key, required this.serverId});
+  const CameraTab({super.key, required this.serverId, this.sideSwitchTiming = const CameraSideSwitchTiming()});
 
   final String serverId;
+  final CameraSideSwitchTiming sideSwitchTiming;
 
   @override
   ConsumerState<CameraTab> createState() => _CameraTabState();
@@ -25,6 +27,7 @@ class _CameraTabState extends ConsumerState<CameraTab> {
   bool _flip = false;
   int? _fps;
   bool _busy = false;
+  bool _switchingSide = false;
   int _streamEpoch = 0;
 
   void _snack(String text, {bool error = false}) {
@@ -35,9 +38,9 @@ class _CameraTabState extends ConsumerState<CameraTab> {
     ));
   }
 
-  Future<void> _setCamera(HuskApi api, {bool? front, int? rotation, bool? flip, int? fps}) async {
+  Future<void> _setCamera(HuskApi api, {int? rotation, bool? flip, int? fps}) async {
     try {
-      final result = await api.setCamera(front: front, rotation: rotation, flip: flip, fps: fps);
+      final result = await api.setCamera(rotation: rotation, flip: flip, fps: fps);
       if (result.isErr) {
         _snack(result.text, error: true);
       } else if (mounted) {
@@ -45,12 +48,40 @@ class _CameraTabState extends ConsumerState<CameraTab> {
         // waiting for it to drop the stream (or for the 15 s idle timeout).
         setState(() => _streamEpoch++);
       }
+    } on HuskException catch (e) {
+      _snack(e.message, error: true);
+    }
+  }
+
+  /// /set?front= confirmed against /flags with one retry (spec 5.8); the side buttons
+  /// are disabled until it settles.
+  Future<void> _switchSide(HuskApi api, bool front) async {
+    if (_switchingSide) return;
+    setState(() => _switchingSide = true);
+    var confirmed = false;
+    try {
+      confirmed = await switchCameraSide(
+        front: front,
+        send: (front) => api.setCamera(front: front),
+        readFront: () async => (await api.flags()).front,
+        timing: widget.sideSwitchTiming,
+        isCancelled: () => !mounted,
+      );
+      if (!confirmed) _snack('The phone did not switch cameras. Wait a few seconds and try again.', error: true);
     } on HttpStatusException catch (e) {
       _snack(e.statusCode == 409 ? 'This camera side does not exist on the device.' : e.message, error: true);
     } on HuskException catch (e) {
       _snack(e.message, error: true);
     }
-    if (mounted) ref.invalidate(flagsProvider(widget.serverId));
+    if (!mounted) return;
+    setState(() {
+      _switchingSide = false;
+      // The phone restarted the camera on the new side; reconnect now rather than
+      // waiting for it to drop the stream (or for the 15 s idle timeout).
+      if (confirmed) _streamEpoch++;
+    });
+    // Show what the phone reports, whether or not the switch took.
+    ref.invalidate(flagsProvider(widget.serverId));
   }
 
   Future<void> _snapshot(HuskApi api) async {
@@ -100,17 +131,27 @@ class _CameraTabState extends ConsumerState<CameraTab> {
       const SizedBox(height: 16),
       Text('Camera side', style: textTheme.labelLarge),
       const SizedBox(height: 4),
-      SegmentedButton<bool>(
-        segments: const [
-          ButtonSegment(value: false, label: Text('Back')),
-          ButtonSegment(value: true, label: Text('Front')),
-        ],
-        selected: {?front},
-        emptySelectionAllowed: true,
-        onSelectionChanged: (v) {
-          if (v.isNotEmpty) _setCamera(api, front: v.first);
-        },
-      ),
+      Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(value: false, label: Text('Back')),
+            ButtonSegment(value: true, label: Text('Front')),
+          ],
+          selected: {?front},
+          emptySelectionAllowed: true,
+          onSelectionChanged: _switchingSide
+              ? null
+              : (v) {
+                  if (v.isNotEmpty) _switchSide(api, v.first);
+                },
+        ),
+        if (_switchingSide)
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(width: 8),
+            Text('Switching…', style: textTheme.bodySmall),
+          ]),
+      ]),
       const SizedBox(height: 16),
       Text('Rotation', style: textTheme.labelLarge),
       const SizedBox(height: 4),
