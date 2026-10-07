@@ -32,9 +32,12 @@ class HuskApi {
   /// For endpoints that drive the phone's UI (dump, rpc, management).
   static const _slow = Duration(seconds: 30);
 
-  /// Maximum silence between chunks of a live stream before it is dropped.
-  /// Enforced by [openMultipart] on the returned stream itself: dio's
-  /// receiveTimeout only covers the wait for the response headers.
+  /// Idle limit for [openMultipart]. dio's receiveTimeout (dio 5.x IO
+  /// adapter) bounds only the wait for the response headers and gives no
+  /// per-chunk timer for `ResponseType.stream`. So [openMultipart] wraps the
+  /// returned stream in `Stream.timeout(streamIdle)`: when no chunk arrives
+  /// for this long, the stream emits [OfflineException], closes, and cancels
+  /// the underlying response so consumers can reconnect.
   final Duration streamIdle;
 
   final String baseUrl;
