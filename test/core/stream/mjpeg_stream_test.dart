@@ -61,4 +61,22 @@ void main() {
     );
     expect(frames, [c]);
   });
+
+  group('a Content-Length larger than the part', () {
+    // Declares 5000 bytes but the part is ~40 bytes; three valid frames follow.
+    List<int> bogus() => [
+          ...ascii.encode('--rigframe\r\nContent-Type: image/jpeg\r\nContent-Length: 5000\r\n\r\n'),
+          ...a,
+          ...ascii.encode('\r\n'),
+        ];
+
+    test('is not trusted: the part is cut at the next boundary and later frames survive', () async {
+      expect(await parse([[...bogus(), ...part(a), ...part(b), ...part(c)]]), [a, a, b, c]);
+    });
+
+    test('recovers when the bytes arrive one at a time', () async {
+      final bytes = [...bogus(), ...part(a), ...part(b), ...part(c)];
+      expect(await parse([for (final byte in bytes) [byte]]), [a, a, b, c]);
+    });
+  });
 }

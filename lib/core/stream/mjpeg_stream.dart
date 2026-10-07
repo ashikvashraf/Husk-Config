@@ -4,9 +4,10 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 /// Splits a `multipart/x-mixed-replace` body (Husk /stream and /screen) into
-/// JPEG frames. Uses Content-Length when present, otherwise cuts at the next
-/// boundary. If more than [maxBufferBytes] pile up without a complete frame,
-/// the buffer is dropped so a broken stream cannot grow memory without bound.
+/// JPEG frames. Uses Content-Length when present (unless a boundary shows up
+/// inside the declared length), otherwise cuts at the next boundary. If more
+/// than [maxBufferBytes] pile up without a complete frame, the buffer is
+/// dropped so a broken stream cannot grow memory without bound.
 class MjpegParser extends StreamTransformerBase<Uint8List, Uint8List> {
   MjpegParser(String boundary, {this.maxBufferBytes = 16 * 1024 * 1024}) : _delimiter = utf8.encode('--$boundary');
 
@@ -79,7 +80,17 @@ class _MjpegSink implements EventSink<Uint8List> {
           _part = _Part.body;
         case _Part.body:
           if (_length >= 0) {
-            if (_buffer.length < _length) return;
+            // A boundary inside the declared length means the length is bogus:
+            // stop trusting it and cut at that boundary instead.
+            final early = _buffer.indexOf(_delimiter, _scanFrom);
+            if (early >= 0 && early < _length) {
+              _length = -1;
+              continue;
+            }
+            if (_buffer.length < _length) {
+              _scanFrom = math.max(0, _buffer.length - _delimiter.length);
+              return;
+            }
             _emit(_buffer.take(_length));
           } else {
             final at = _buffer.indexOf(_delimiter, _scanFrom);
