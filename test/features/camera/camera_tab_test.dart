@@ -56,4 +56,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('This camera side does not exist on the device.'), findsOneWidget);
   });
+
+  testWidgets('a successful /set reconnects the stream instead of waiting for the phone to drop it', (tester) async {
+    when(() => api.setCamera(front: false)).thenAnswer((_) async => const TextResult('ok'));
+    await pump(tester);
+    verify(() => api.openMultipart('/stream', cancelToken: any(named: 'cancelToken'))).called(1);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    verify(() => api.openMultipart('/stream', cancelToken: any(named: 'cancelToken'))).called(1);
+  });
+
+  testWidgets('a failed /set leaves the stream connection alone', (tester) async {
+    when(() => api.setCamera(front: false)).thenThrow(HttpStatusException(409, 'no such camera'));
+    await pump(tester);
+    clearInteractions(api);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    verifyNever(() => api.openMultipart(any(), cancelToken: any(named: 'cancelToken')));
+  });
 }

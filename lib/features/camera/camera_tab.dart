@@ -25,6 +25,7 @@ class _CameraTabState extends ConsumerState<CameraTab> {
   bool _flip = false;
   int? _fps;
   bool _busy = false;
+  int _streamEpoch = 0;
 
   void _snack(String text, {bool error = false}) {
     if (!mounted) return;
@@ -37,7 +38,13 @@ class _CameraTabState extends ConsumerState<CameraTab> {
   Future<void> _setCamera(HuskApi api, {bool? front, int? rotation, bool? flip, int? fps}) async {
     try {
       final result = await api.setCamera(front: front, rotation: rotation, flip: flip, fps: fps);
-      if (result.isErr) _snack(result.text, error: true);
+      if (result.isErr) {
+        _snack(result.text, error: true);
+      } else if (mounted) {
+        // The phone restarts the camera for the new settings; reconnect now rather than
+        // waiting for it to drop the stream (or for the 15 s idle timeout).
+        setState(() => _streamEpoch++);
+      }
     } on HttpStatusException catch (e) {
       _snack(e.statusCode == 409 ? 'This camera side does not exist on the device.' : e.message, error: true);
     } on HuskException catch (e) {
@@ -148,7 +155,7 @@ class _CameraTabState extends ConsumerState<CameraTab> {
       ),
     ]);
 
-    final view = MjpegView(api: api, path: '/stream');
+    final view = MjpegView(key: ValueKey(_streamEpoch), api: api, path: '/stream');
     if (wide) {
       return Row(children: [
         Expanded(child: view),
