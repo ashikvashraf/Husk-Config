@@ -34,12 +34,12 @@ class _ToolsTabState extends State<ToolsTab> {
   ToolPage _selected = ToolPage.inspect;
 
   Widget _page(ToolPage page) => switch (page) {
-        ToolPage.inspect => InspectTool(serverId: widget.serverId),
-        ToolPage.launch => LaunchTool(serverId: widget.serverId),
-        ToolPage.motion => MotionTool(serverId: widget.serverId),
-        ToolPage.management => ManagementTool(serverId: widget.serverId),
-        ToolPage.rpc => RpcTool(serverId: widget.serverId),
-        ToolPage.token => TokenTool(serverId: widget.serverId),
+        ToolPage.inspect => InspectTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
+        ToolPage.launch => LaunchTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
+        ToolPage.motion => MotionTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
+        ToolPage.management => ManagementTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
+        ToolPage.rpc => RpcTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
+        ToolPage.token => TokenTool(key: ValueKey(widget.serverId), serverId: widget.serverId),
       };
 
   @override

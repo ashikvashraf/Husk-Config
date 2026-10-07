@@ -54,7 +54,7 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
         DeviceTab.overview => OverviewTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.camera => CameraTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.screen => ScreenTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
-        DeviceTab.tools => ToolsTab(serverId: widget.serverId),
+        DeviceTab.tools => ToolsTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
       };
 
   @override
