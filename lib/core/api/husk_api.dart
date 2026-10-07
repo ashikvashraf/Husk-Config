@@ -18,6 +18,7 @@ class HuskApi {
     HttpClientAdapter? adapter,
     Duration connectTimeout = const Duration(seconds: 3),
     Duration receiveTimeout = const Duration(seconds: 10),
+    this.streamIdle = const Duration(seconds: 15),
   }) : _dio = Dio(BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: connectTimeout,
@@ -32,7 +33,9 @@ class HuskApi {
   static const _slow = Duration(seconds: 30);
 
   /// Maximum silence between chunks of a live stream before it is dropped.
-  static const _streamIdle = Duration(seconds: 15);
+  /// Enforced by [openMultipart] on the returned stream itself: dio's
+  /// receiveTimeout only covers the wait for the response headers.
+  final Duration streamIdle;
 
   final String baseUrl;
   final String? token;
@@ -61,7 +64,7 @@ class HuskApi {
     final response = await _get<ResponseBody>(
       path,
       responseType: ResponseType.stream,
-      receiveTimeout: _streamIdle,
+      receiveTimeout: streamIdle, // header wait only; chunk silence is handled below
       cancelToken: cancelToken,
     );
     final status = response.statusCode ?? 0;
@@ -71,7 +74,17 @@ class HuskApi {
       final bytes = await body.stream.fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
       _check(status, utf8.decode(bytes, allowMalformed: true));
     }
-    return (contentType: response.headers.value(Headers.contentTypeHeader) ?? '', stream: body.stream);
+    // dio gives no per-chunk idle timeout for streams, so a connected but
+    // silent stream (Wi-Fi drop, phone asleep) would hang forever. On silence,
+    // surface an OfflineException and close so consumers can reconnect.
+    final stream = body.stream.timeout(
+      streamIdle,
+      onTimeout: (sink) {
+        sink.addError(const OfflineException('Stream stalled'));
+        sink.close();
+      },
+    );
+    return (contentType: response.headers.value(Headers.contentTypeHeader) ?? '', stream: stream);
   }
 
   // --------------------------------------------------- Inspection & generic

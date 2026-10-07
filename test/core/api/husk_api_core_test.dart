@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -87,6 +88,23 @@ void main() {
     final api = HuskApi(baseUrl: 'http://[fd7a::1]:8090', token: 't');
     expect(api.uri('/screen.mp4').toString(), 'http://[fd7a::1]:8090/screen.mp4?token=t');
     expect(HuskApi(baseUrl: 'http://10.0.0.5:8090').uri('/control').toString(), 'http://10.0.0.5:8090/control');
+  });
+
+  test('openMultipart drops a stream that stalls after connecting', () async {
+    final controller = StreamController<Uint8List>();
+    addTearDown(controller.close);
+    final adapter = FakeAdapter((_) => ResponseBody(controller.stream, 200, headers: {
+          Headers.contentTypeHeader: ['multipart/x-mixed-replace; boundary=frame'],
+        }));
+    final api = HuskApi(baseUrl: 'http://10.0.0.5:8090', adapter: adapter, streamIdle: const Duration(milliseconds: 50));
+    final response = await api.openMultipart('/stream');
+    controller.add(Uint8List.fromList([1]));
+    final received = <int>[];
+    await expectLater(
+      response.stream.forEach(received.addAll),
+      throwsA(isA<OfflineException>()),
+    );
+    expect(received, [1]);
   });
 
   test('openMultipart exposes the content type and the raw body stream', () async {
