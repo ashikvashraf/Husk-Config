@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/status_dot.dart';
+import '../camera/camera_tab.dart';
 import '../dashboard/server_status.dart';
 import '../servers/servers_controller.dart';
 import 'overview_tab.dart';
@@ -49,7 +50,7 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
 
   Widget _body() => switch (widget.tab) {
         DeviceTab.overview => OverviewTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
-        DeviceTab.camera => const _TabPlaceholder('Camera'),
+        DeviceTab.camera => CameraTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.screen => const _TabPlaceholder('Screen'),
         DeviceTab.tools => const _TabPlaceholder('Tools'),
       };
