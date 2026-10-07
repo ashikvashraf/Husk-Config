@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/widgets/status_dot.dart';
 import '../camera/camera_tab.dart';
 import '../dashboard/server_status.dart';
+import '../screen/screen_tab.dart';
 import '../servers/servers_controller.dart';
 import 'overview_tab.dart';
 
@@ -51,7 +52,7 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
   Widget _body() => switch (widget.tab) {
         DeviceTab.overview => OverviewTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.camera => CameraTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
-        DeviceTab.screen => const _TabPlaceholder('Screen'),
+        DeviceTab.screen => ScreenTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.tools => const _TabPlaceholder('Tools'),
       };
 
