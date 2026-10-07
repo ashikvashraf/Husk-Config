@@ -6,9 +6,10 @@ import '../../core/storage/server_config.dart';
 import '../../shared/error_text.dart';
 import '../../shared/widgets/status_dot.dart';
 import '../servers/server_actions.dart';
+import '../servers/token_request_dialog.dart';
 import 'server_status.dart';
 
-enum _CardAction { edit, delete }
+enum _CardAction { edit, requestToken, delete }
 
 class ServerCard extends ConsumerWidget {
   const ServerCard({super.key, required this.server});
@@ -40,6 +41,7 @@ class ServerCard extends ConsumerWidget {
                     onSelected: (action) => _onAction(context, ref, action),
                     itemBuilder: (context) => const [
                       PopupMenuItem(value: _CardAction.edit, child: Text('Edit')),
+                      PopupMenuItem(value: _CardAction.requestToken, child: Text('Request token')),
                       PopupMenuItem(value: _CardAction.delete, child: Text('Delete')),
                     ],
                   ),
@@ -63,6 +65,8 @@ class ServerCard extends ConsumerWidget {
     switch (action) {
       case _CardAction.edit:
         await context.push('/servers/${server.id}/edit');
+      case _CardAction.requestToken:
+        await requestTokenForServer(context, ref, server.id);
       case _CardAction.delete:
         await confirmDeleteServer(context, ref, server);
     }
