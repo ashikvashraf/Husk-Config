@@ -48,7 +48,7 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
   void _go(int index) => context.go('/device/${widget.serverId}/${DeviceTab.values[index].name}');
 
   Widget _body() => switch (widget.tab) {
-        DeviceTab.overview => OverviewTab(serverId: widget.serverId),
+        DeviceTab.overview => OverviewTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.camera => const _TabPlaceholder('Camera'),
         DeviceTab.screen => const _TabPlaceholder('Screen'),
         DeviceTab.tools => const _TabPlaceholder('Tools'),

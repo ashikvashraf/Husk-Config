@@ -27,9 +27,22 @@ class _SensorsCardState extends ConsumerState<SensorsCard> {
   Timer? _timer;
 
   @override
+  void didUpdateWidget(SensorsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.serverId != widget.serverId) _stopLive();
+  }
+
+  @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// Stops live polling; the timer closure holds the HuskApi it started with.
+  void _stopLive() {
+    _timer?.cancel();
+    _timer = null;
+    _live = false;
   }
 
   Future<void> _read(HuskApi api, String type) async {
@@ -72,6 +85,9 @@ class _SensorsCardState extends ConsumerState<SensorsCard> {
   @override
   Widget build(BuildContext context) {
     final api = ref.watch(apiProvider(widget.serverId));
+    ref.listen(apiProvider(widget.serverId), (_, _) {
+      if (_live) setState(_stopLive);
+    });
     final reading = _reading;
     return SectionCard(
       title: 'Sensors',
@@ -152,9 +168,22 @@ class _MicCardState extends ConsumerState<MicCard> {
   Timer? _timer;
 
   @override
+  void didUpdateWidget(MicCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.serverId != widget.serverId) _stopLive();
+  }
+
+  @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// Stops live polling; the timer closure holds the HuskApi it started with.
+  void _stopLive() {
+    _timer?.cancel();
+    _timer = null;
+    _live = false;
   }
 
   Future<void> _sample(HuskApi api) async {
@@ -182,6 +211,9 @@ class _MicCardState extends ConsumerState<MicCard> {
   @override
   Widget build(BuildContext context) {
     final api = ref.watch(apiProvider(widget.serverId));
+    ref.listen(apiProvider(widget.serverId), (_, _) {
+      if (_live) setState(_stopLive);
+    });
     final level = _level;
     return SectionCard(
       title: 'Microphone level',
