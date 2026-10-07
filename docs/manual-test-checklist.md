@@ -68,6 +68,14 @@ Not executed (agent, R4). Never mark these passed without a human run.
 - [ ] Task 20 Step 7 (pending, R4) (e): Set Settings -> Default mode to Web control, then reopen the Screen tab. It opens in Web control.
 - [ ] Task 20 Step 7 (pending, R4) (f): Re-run the plan's Task 2 GUI spike against the phone and update docs/superpowers/spikes/2026-10-07-h264-media-kit.md. If Android or macOS fails on the real stream, change h264Platforms in lib/features/screen/screen_mode.dart and the pinned test in test/features/screen/screen_mode_test.dart to match.
 
+### Final review fixes (pending, needs the phone)
+These cover behaviour added in the final whole-branch fix wave. Automated (fakes): pass, see each line. Manual: not run.
+- [ ] (g) Screen tab: rotate the phone while MJPEG (and H.264) is showing. Taps and swipes still land where clicked after the frame turns. Automated (fakes): `screen_tab_test.dart` "a rotated frame re-reads /display and maps taps with the rotated size".
+- [ ] (h) H.264: leave the phone screen static for 10 s or more. H.264 must not fall back. Then throttle the network (or load the phone) until the view lags more than 2 s for a few seconds; it falls back with "H.264 not supported on this platform — using MJPEG (latency drifted past 2 s)". Automated (fakes): `latency_drift_test.dart`.
+- [ ] (i) Tools on the wide layout: open Motion alarm on one server, then switch server in the app bar. The tool list resets and Motion alarm shows the second server's settings. Automated (fakes): `device_shell_test.dart` "switching server on the Tools tab reloads the tool page for the new server".
+
+**Merge gate:** the app has not been run against a real Husk phone. Before merging, run at least the Safe section on macOS against `192.168.0.106:8090`, or accept the gap explicitly and merge with this checklist as a follow-up.
+
 ## Changes phone state: ONLY with the user's explicit OK
 No user was available to approve any of these, so none was run and nothing on the phone was changed.
 - [ ] skipped (not approved): Request token (this SETS a token on a phone that has none; record it)
