@@ -73,6 +73,34 @@ void main() {
     );
   });
 
+  test('connect timeout maps to OfflineException', () async {
+    final f = fakeApi((options) => throw DioException.connectionTimeout(
+          timeout: options.connectTimeout ?? const Duration(seconds: 3),
+          requestOptions: options,
+        ));
+    await expectLater(
+      f.api.healthz(),
+      throwsA(isA<OfflineException>().having((e) => e.message, 'message', "Can't reach 10.0.0.5:8090")),
+    );
+  });
+
+  test('receive timeout from a server that accepts but never answers maps to OfflineException', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final sockets = <Socket>[];
+    server.listen(sockets.add); // Accept the connection and never reply.
+    addTearDown(() async {
+      for (final s in sockets) {
+        s.destroy();
+      }
+      await server.close();
+    });
+    final api = HuskApi(baseUrl: 'http://127.0.0.1:${server.port}', receiveTimeout: const Duration(milliseconds: 200));
+    await expectLater(
+      api.info(),
+      throwsA(isA<OfflineException>().having((e) => e.message, 'message', "Can't reach 127.0.0.1:${server.port}")),
+    );
+  });
+
   test('snapshot returns the JPEG bytes', () async {
     final f = fakeApi((_) => bytesBody([0xFF, 0xD8, 0xFF, 0xD9]));
     expect(await f.api.snapshot(), Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xD9]));
