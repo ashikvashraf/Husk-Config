@@ -14,4 +14,10 @@ void main() {
     expect(effectiveScreenMode(session: null, defaultMode: ScreenMode.webview, available: {ScreenMode.mjpeg, ScreenMode.webview}), ScreenMode.webview);
     expect(effectiveScreenMode(session: ScreenMode.h264, defaultMode: ScreenMode.h264, available: {ScreenMode.mjpeg}), ScreenMode.mjpeg);
   });
+
+  test('availableScreenModes hides H.264 when unsupported or after a failure', () {
+    expect(availableScreenModes(h264Supported: true, h264Failed: false), {ScreenMode.mjpeg, ScreenMode.h264, ScreenMode.webview});
+    expect(availableScreenModes(h264Supported: false, h264Failed: false), {ScreenMode.mjpeg, ScreenMode.webview});
+    expect(availableScreenModes(h264Supported: true, h264Failed: true), {ScreenMode.mjpeg, ScreenMode.webview});
+  });
 }

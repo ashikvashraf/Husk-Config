@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,9 +15,11 @@ import '../device/overview_providers.dart';
 import '../servers/api_provider.dart';
 import '../settings/settings_controller.dart';
 import 'gesture_layer.dart';
+import 'h264_view.dart';
 import 'input_controls.dart';
 import 'input_queue.dart';
 import 'screen_mode.dart';
+import 'web_control_view.dart';
 
 /// Size of one display, keyed by (server id, display id). Display 0 uses the
 /// shared [displayInfoProvider].
@@ -45,6 +48,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
   late final InputQueue _queue = InputQueue(onError: _showInputError);
   int _display = 0;
   bool _fullscreenOpen = false;
+  bool _h264Failed = false;
 
   void _showInputError(Object error) {
     if (!mounted) return;
@@ -74,6 +78,7 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
   /// The live view for [mode] on the selected display. [display] is that
   /// display's pixel size from /display.
   Widget _modeView(ScreenMode mode, HuskApi api, AsyncValue<DisplayInfo> display) {
+    if (mode == ScreenMode.webview) return WebControlView(api: api);
     final info = display.value;
     if (info == null) {
       final error = display.error;
@@ -81,12 +86,27 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     }
     final deviceSize = Size(info.width.toDouble(), info.height.toDouble());
     return switch (mode) {
-      ScreenMode.mjpeg || ScreenMode.h264 || ScreenMode.webview => _interactive(
+      ScreenMode.mjpeg => _interactive(
           api,
           deviceSize,
           // A new key and path per display so the stream reconnects on the picked one.
           MjpegView(key: ValueKey('screen-$_display'), api: api, path: _display == 0 ? '/screen' : '/screen?d=$_display'),
         ),
+      ScreenMode.h264 => _interactive(
+          api,
+          deviceSize,
+          H264View(
+            key: ValueKey('screen-h264-$_display'),
+            uri: api.uri('/screen.mp4', _display == 0 ? const {} : {'d': _display}),
+            catchUpSeek: h264CatchUpSeek,
+            onFailed: (message) {
+              if (!mounted || _h264Failed) return;
+              setState(() => _h264Failed = true);
+              _snack('H.264 not supported on this platform — using MJPEG ($message)');
+            },
+          ),
+        ),
+      ScreenMode.webview => WebControlView(api: api),
     };
   }
 
@@ -171,7 +191,10 @@ class _ScreenTabState extends ConsumerState<ScreenTab> {
     final flags = ref.watch(flagsProvider(id));
     final display = ref.watch(_displaySizeProvider((id, _display)));
     final displays = ref.watch(displaysProvider(id)).value ?? const [DisplayEntry(id: 0, raw: '0')];
-    final available = availableScreenModes();
+    final available = availableScreenModes(
+      h264Supported: h264Platforms.contains(defaultTargetPlatform),
+      h264Failed: _h264Failed,
+    );
     final mode = effectiveScreenMode(
       session: ref.watch(sessionScreenModeProvider),
       defaultMode: ref.watch(settingsProvider.select((s) => s.defaultScreenMode)),

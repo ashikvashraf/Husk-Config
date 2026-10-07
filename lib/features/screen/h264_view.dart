@@ -1,0 +1,61 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+
+/// Plays Husk's live fMP4 /screen.mp4 with mpv's low-latency settings.
+/// Calls [onFailed] on any player error so the tab can fall back to MJPEG.
+class H264View extends StatefulWidget {
+  const H264View({super.key, required this.uri, required this.onFailed, this.catchUpSeek = true});
+
+  final Uri uri;
+  final ValueChanged<String> onFailed;
+  final bool catchUpSeek;
+
+  @override
+  State<H264View> createState() => _H264ViewState();
+}
+
+class _H264ViewState extends State<H264View> {
+  late final Player _player = Player();
+  late final VideoController _controller = VideoController(_player);
+  StreamSubscription<String>? _errors;
+  Timer? _watchdog;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  Future<void> _start() async {
+    final native = _player.platform;
+    if (native is NativePlayer) {
+      await native.setProperty('profile', 'low-latency');
+      await native.setProperty('cache', 'no');
+      await native.setProperty('untimed', 'yes');
+    }
+    // mpv errors may echo the URL; strip it so the token never reaches the UI.
+    _errors = _player.stream.error.listen((e) => widget.onFailed(e.replaceAll(widget.uri.toString(), '/screen.mp4')));
+    await _player.open(Media(widget.uri.toString()));
+    if (widget.catchUpSeek) {
+      _watchdog = Timer.periodic(const Duration(seconds: 2), (_) {
+        final state = _player.state;
+        if (state.buffer - state.position > const Duration(seconds: 2)) _player.seek(state.buffer);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _watchdog?.cancel();
+    _errors?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Video(controller: _controller, controls: NoVideoControls, fit: BoxFit.contain, fill: Colors.black);
+}

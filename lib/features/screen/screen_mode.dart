@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/storage/app_settings.dart';
@@ -12,8 +13,19 @@ class SessionScreenMode extends Notifier<ScreenMode?> {
 
 final sessionScreenModeProvider = NotifierProvider<SessionScreenMode, ScreenMode?>(SessionScreenMode.new);
 
-/// Modes this build can show. H.264 and Web control are added in Task 20.
-Set<ScreenMode> availableScreenModes() => {ScreenMode.mjpeg};
+/// Platforms where H.264 /screen.mp4 plays. Provisional until the Task 2
+/// spike is run (it was deferred); then replace with the spike's H264_PLATFORMS.
+const Set<TargetPlatform> h264Platforms = {TargetPlatform.macOS, TargetPlatform.android};
+
+/// Whether H264View seeks to the live edge when it falls >2 s behind.
+/// Provisional until the Task 2 spike is run (spike: CATCH_UP_SEEK).
+const bool h264CatchUpSeek = true;
+
+Set<ScreenMode> availableScreenModes({required bool h264Supported, required bool h264Failed}) => {
+      ScreenMode.mjpeg,
+      if (h264Supported && !h264Failed) ScreenMode.h264,
+      ScreenMode.webview,
+    };
 
 ScreenMode effectiveScreenMode({
   required ScreenMode? session,
