@@ -1,0 +1,2026 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Husk Device API",
+    "version": "1.4",
+    "summary": "Remote control and inspection API served by the Husk Android app over a private network.",
+    "description": "HTTP API served by the Husk app on TCP port 8090. The server listens on all interfaces but is protected by a source-IP allowlist that admits loopback, private LAN ranges, the 100.64.0.0/10 CGNAT range Tailscale uses, and IPv6 ULA. Note that some mobile carriers also hand out addresses from 100.64.0.0/10, so on mobile data the allowlist is wider than your Tailscale network alone. Human-readable reference: https://xplat.co/husk/api . Every endpoint except /healthz, /, /token/request and /token/status accepts an optional `token` query parameter, required only when a token is configured on the device. Since 1.4 the token is set in the app or requested with /token/request and approved on the phone; the adb route (a global system setting) is no longer read. The accessibility-driven endpoints proxy a line protocol on localhost:8127. Anti-CSRF / anti-DNS-rebinding (since 0.9.28): the server rejects cross-site browser requests (Sec-Fetch-Site) and requires the Host header to be an IP literal or localhost - reach the phone by its IP, not a hostname/MagicDNS name. Non-browser clients (curl, scripts) are unaffected. Responses carry X-Content-Type-Options: nosniff.",
+    "license": {
+      "name": "GPL-3.0-or-later",
+      "identifier": "GPL-3.0-or-later"
+    },
+    "contact": {
+      "name": "xplat",
+      "url": "https://xplat.co/husk"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://{host}:8090",
+      "description": "The phone, reachable on its Tailscale or LAN IP",
+      "variables": {
+        "host": {
+          "default": "100.100.101.101",
+          "description": "The phone's Tailscale or LAN IP (see GET /info)"
+        }
+      }
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "token": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "token"
+      }
+    }
+  },
+  "security": [
+    {
+      "token": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Status"
+    },
+    {
+      "name": "Kamera"
+    },
+    {
+      "name": "Skærm"
+    },
+    {
+      "name": "Input"
+    },
+    {
+      "name": "Inspektion"
+    },
+    {
+      "name": "Navigation"
+    },
+    {
+      "name": "Adgangstoken"
+    },
+    {
+      "name": "Management"
+    },
+    {
+      "name": "Generisk"
+    },
+    {
+      "name": "Hardware"
+    },
+    {
+      "name": "Bevægelse"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Liveness-probe",
+        "description": "Liveness-probe. Svarer altid uden token.",
+        "tags": [
+          "Status"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/info": {
+      "get": {
+        "summary": "Komplet øjebliksbillede af host-enheden: app-version, fabrikat/model, Android-version, skærm-opløsning, lokal + Tailscale-IP, batteri, og hvilke services der kører",
+        "description": "Komplet øjebliksbillede af host-enheden: app-version, fabrikat/model, Android-version, skærm-opløsning, lokal + Tailscale-IP, batteri, og hvilke services der kører. Ét kald der giver alt man behøver for at kende enheden. Bemærk fra 1.0: net.tailscaleIp er null, med mindre enheden faktisk er på et tailnet. En adresse i 100.64.0.0/10 alene tæller ikke (mobilselskaber uddeler samme CGNAT-blok); samme interface skal også bære en fd7a:115c:a1e0::/48-adresse. Et selvhostet Headscale med et andet ULA-præfiks læses derfor som »ingen Tailscale«.",
+        "tags": [
+          "Status"
+        ],
+        "operationId": "info",
+        "responses": {
+          "200": {
+            "description": "{\"app\":{\"package\",\"versionName\",\"versionCode\"},\"device\":{\"manufacturer\",\"model\",\"androidRelease\",\"sdkInt\",\"dexCapable\",\"hasCamera\"},\"screen\":{\"width\",\"height\"},\"net\":{\"localIp\",\"tailscaleIp\"},\"battery\":{\"level\",\"charging\"},\"services\":{\"a11y\",\"camera\",\"screen\",\"dexReconnect\"}}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/flags": {
+      "get": {
+        "summary": "Lille service-tilstand (delmængde af /info): a11y-motor, kamera, hvilken kameraside der er VALGT, skærmdeling, bevægelses-alarm, om en ntfy-topic er sat, om batteri-optimering ignoreres, DeX-reconnect-toggle, og sidste push-resultat",
+        "description": "Lille service-tilstand (delmængde af /info): a11y-motor, kamera, hvilken kameraside der er VALGT, skærmdeling, bevægelses-alarm, om en ntfy-topic er sat, om batteri-optimering ignoreres, DeX-reconnect-toggle, og sidste push-resultat. `front` er det VALGTE kamera (true = forside), og er IKKE et bevis for en leveret frame; `camera` viser fortsat faktisk capture-aktivitet. Bekræft resultatet med /snapshot eller /stream. Fra 1.1 findes feltet `lastUpdate` ikke mere - appen har ingen indbygget updater. ⛔ `camera` er IKKE en diagnose. Kameraet er DOVENT og lukkes ca. 4 sekunder efter sidste forbruger, så `camera:false` er den normale hviletilstand og kan ikke skelnes fra et kamera der er dødt. Vil du vide om kameraet virker, så kald `/snapshot` to gange (første kald vækker det) og døm på om der kommer et JPEG.",
+        "tags": [
+          "Status"
+        ],
+        "operationId": "flags",
+        "responses": {
+          "200": {
+            "description": "{\"dexReconnect\",\"a11y\",\"camera\",\"front\",\"screen\",\"motion\",\"ntfy\",\"batteryOptIgnored\",\"lastNtfy\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/snapshot": {
+      "get": {
+        "summary": "Seneste enkelt-frame fra kameraet",
+        "description": "Seneste enkelt-frame fra kameraet.",
+        "tags": [
+          "Kamera"
+        ],
+        "operationId": "snapshot",
+        "responses": {
+          "200": {
+            "description": "JPEG-billede (503 hvis intet frame endnu)",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/stream": {
+      "get": {
+        "summary": "Live MJPEG-stream fra kameraet (multipart/x-mixed-replace)",
+        "description": "Live MJPEG-stream fra kameraet (multipart/x-mixed-replace). Åbn i en browser eller <img>-tag.",
+        "tags": [
+          "Kamera"
+        ],
+        "operationId": "stream",
+        "responses": {
+          "200": {
+            "description": "Løbende JPEG-frames",
+            "content": {
+              "multipart/x-mixed-replace": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/set": {
+      "get": {
+        "summary": "Juster kamera-config i farten",
+        "description": "Juster kamera-config i farten. `front` vælger kameraside (0 = bagkamera, 1 = forsidekamera) og er fra 1.1 den eneste understøttede måde at skifte side på - ingen ADB, intent eller terminal. Kontrakten: et ÆNDRET valg genåbner capture-sessionen ved næste efterspørgsel, SAMME værdi er en no-op der ikke lukker en kørende session, en ugyldig værdi giver 400 uden tilstandsændring, og findes den ønskede kameraside ikke på enheden, svares der en dokumenteret fejl frem for et tavst fallback til den anden side. Et accepteret valg er ikke bevis for en leveret frame - bekræft med /snapshot eller /stream, og læs det valgte i /flags.front.",
+        "tags": [
+          "Kamera"
+        ],
+        "operationId": "set",
+        "responses": {
+          "200": {
+            "description": "ok (400 ved ugyldig værdi, 409 hvis kamerasiden ikke findes)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "rot",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Rotation i grader: 0|90|180|270"
+          },
+          {
+            "name": "flip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Horisontal spejling (1/0)"
+          },
+          {
+            "name": "front",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Kameraside: 0 = bagkamera, 1 = forsidekamera"
+          },
+          {
+            "name": "fps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Øvre grænse for stream-frames pr. sekund"
+          },
+          {
+            "name": "sq",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "SKÆRM-strømmens JPEG-kvalitet 1..100 (lavere = mindre lag)"
+          },
+          {
+            "name": "sfps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "SKÆRM-strømmens frames pr. sekund 1..30"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/screen": {
+      "get": {
+        "summary": "Live MJPEG-stream af TELEFONENS SKÆRM (MediaProjection)",
+        "description": "Live MJPEG-stream af TELEFONENS SKÆRM (MediaProjection). Kræver at skærmdeling er slået til i appen. Virker på enhver Android (modsat scrcpy, der kræver Wireless Debugging).",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "screen",
+        "responses": {
+          "200": {
+            "description": "Løbende JPEG-frames af skærmen",
+            "content": {
+              "multipart/x-mixed-replace": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/screen.jpg": {
+      "get": {
+        "summary": "Enkelt-frame af skærmen (godt til programmatisk inspektion)",
+        "description": "Enkelt-frame af skærmen (godt til programmatisk inspektion).",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "screen_jpg",
+        "responses": {
+          "200": {
+            "description": "JPEG af skærmen (503 hvis skærmdeling er slået fra)",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/control": {
+      "get": {
+        "summary": "Browser-side der viser skærmen (MJPEG) og oversætter klik til a11y-tap + Tilbage/Hjem/Recents + tastatur",
+        "description": "Browser-side der viser skærmen (MJPEG) og oversætter klik til a11y-tap + Tilbage/Hjem/Recents + tastatur. Åbn i en browser for at se+styre telefonen.",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "control",
+        "responses": {
+          "200": {
+            "description": "Interaktiv kontrol-side",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/controlhw": {
+      "get": {
+        "summary": "Som /control, men bruger hardware-H.264/MSE (/screen.mp4) i stedet for MJPEG - mærkbart lavere lag + båndbredde",
+        "description": "Som /control, men bruger hardware-H.264/MSE (/screen.mp4) i stedet for MJPEG - mærkbart lavere lag + båndbredde. Kræver at skærmdeling er slået til.",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "controlhw",
+        "responses": {
+          "200": {
+            "description": "Interaktiv kontrol-side (H.264/MSE)",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/screen.mp4": {
+      "get": {
+        "summary": "Live hardware-H.264-stream af skærmen som fragmenteret MP4 (fMP4), til Media Source Extensions i en browser",
+        "description": "Live hardware-H.264-stream af skærmen som fragmenteret MP4 (fMP4), til Media Source Extensions i en browser. Langt lavere båndbredde/lag end MJPEG (inter-frame-kompression). Startes lazily ved første klient. Kræver at skærmdeling er slået til.",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "screen_mp4",
+        "responses": {
+          "200": {
+            "description": "Løbende fMP4-fragmenter",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/screen.codec": {
+      "get": {
+        "summary": "MSE-codec-streng (fx avc1.428020) til MediaSource.addSourceBuffer for /screen.mp4-strømmen",
+        "description": "MSE-codec-streng (fx avc1.428020) til MediaSource.addSourceBuffer for /screen.mp4-strømmen.",
+        "tags": [
+          "Skærm"
+        ],
+        "operationId": "screen_codec",
+        "responses": {
+          "200": {
+            "description": "avc1.PPCCLL",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/wake": {
+      "get": {
+        "summary": "Væk telefonens skærm (display 0) + hold den tændt ~120 s",
+        "description": "Væk telefonens skærm (display 0) + hold den tændt ~120 s. KØR DETTE FØRST på en idle enhed: med slukket skærm afviser Android gestus (tap/swipe giver ERR cancelled), a11y-node-læsning ser kun navbaren, og home/back er no-ops.",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "wake",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/tap": {
+      "get": {
+        "summary": "Tap på absolutte skærm-koordinater (rigtige pixels, jf",
+        "description": "Tap på absolutte skærm-koordinater (rigtige pixels, jf. /info screen).",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "tap",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "x",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "X i pixels"
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Y i pixels"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0 = telefonskærmen; 2 = DeX)"
+          },
+          {
+            "name": "ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Tryk-varighed i ms (default 60)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/swipe": {
+      "get": {
+        "summary": "Swipe/træk mellem to punkter",
+        "description": "Swipe/træk mellem to punkter.",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "swipe",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "x1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Start-X"
+          },
+          {
+            "name": "y1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Start-Y"
+          },
+          {
+            "name": "x2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Slut-X"
+          },
+          {
+            "name": "y2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Slut-Y"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Varighed i ms (default 200)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/key": {
+      "get": {
+        "summary": "Global navigations-handling",
+        "description": "Global navigations-handling.",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "key",
+        "responses": {
+          "200": {
+            "description": "OK, eller ERR ime-needs-api30 for k=enter på Android < 11",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "k",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "back | home | recents | notifications | enter. En UKENDT værdi behandles som back"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/click": {
+      "get": {
+        "summary": "Klik det FØRSTE UI-element hvis tekst eller indholds-beskrivelse matcher regex'en (case-insensitive)",
+        "description": "Klik det FØRSTE UI-element hvis tekst eller indholds-beskrivelse matcher regex'en (case-insensitive). Langt mere robust end koordinat-tap.",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "click",
+        "responses": {
+          "200": {
+            "description": "OK | NONE (intet match)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "match",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Regex der matches mod tekst/contentDescription"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/text": {
+      "get": {
+        "summary": "Skriv tekst i det aktuelt INPUT-fokuserede felt (via a11y ACTION_SET_TEXT)",
+        "description": "Skriv tekst i det aktuelt INPUT-fokuserede felt (via a11y ACTION_SET_TEXT). Send hele feltets ønskede indhold; newlines fjernes. Brug /key?k=enter til at sende/søge bagefter.",
+        "tags": [
+          "Input"
+        ],
+        "operationId": "text",
+        "responses": {
+          "200": {
+            "description": "OK | NONE no-focus",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "t",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Teksten der skal skrives (URL-encodet)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/find": {
+      "get": {
+        "summary": "Find første node der matcher regex'en og returnér dens center-koordinater",
+        "description": "Find første node der matcher regex'en og returnér dens center-koordinater.",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "find",
+        "responses": {
+          "200": {
+            "description": "x y (center) | NONE",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "match",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Regex"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/gettext": {
+      "get": {
+        "summary": "Hent tekst (eller contentDescription) fra første matchende node",
+        "description": "Hent tekst (eller contentDescription) fra første matchende node.",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "gettext",
+        "responses": {
+          "200": {
+            "description": "Node-tekst | NONE",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "match",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Regex"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/exists": {
+      "get": {
+        "summary": "Findes der en node der matcher regex'en? Godt til at vente på en UI-tilstand",
+        "description": "Findes der en node der matcher regex'en? Godt til at vente på en UI-tilstand.",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "exists",
+        "responses": {
+          "200": {
+            "description": "1 | 0",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "match",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Regex"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/dump": {
+      "get": {
+        "summary": "Dump hele accessibility-node-træet for et display (tekst + bounds)",
+        "description": "Dump hele accessibility-node-træet for et display (tekst + bounds). Til at forstå et ukendt skærmbillede programmatisk.",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "dump",
+        "responses": {
+          "200": {
+            "description": "Node-træet som tekst",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/displays": {
+      "get": {
+        "summary": "Liste over aktive displays (telefonskærm, DeX/eksternt)",
+        "description": "Liste over aktive displays (telefonskærm, DeX/eksternt).",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "displays",
+        "responses": {
+          "200": {
+            "description": "Display-id'er + status",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/scroll": {
+      "get": {
+        "summary": "Scroll det scrollbare element på et display",
+        "description": "Scroll det scrollbare element på et display.",
+        "tags": [
+          "Inspektion"
+        ],
+        "operationId": "scroll",
+        "responses": {
+          "200": {
+            "description": "OK | NONE",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "fwd (default) | back"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/launch": {
+      "get": {
+        "summary": "Start en intent (Settings-skærm, app, eller URL) på et display",
+        "description": "Start en intent (Settings-skærm, app, eller URL) på et display. data/pkg er valgfri. URL-encode data hvis den indeholder specialtegn.",
+        "tags": [
+          "Navigation"
+        ],
+        "operationId": "launch",
+        "responses": {
+          "200": {
+            "description": "OK | ERR ...",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Intent-action, fx android.settings.SETTINGS eller android.intent.action.VIEW"
+          },
+          {
+            "name": "data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Data-URI (fx https://... ved VIEW)"
+          },
+          {
+            "name": "pkg",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Målpakke (valgfri)"
+          },
+          {
+            "name": "d",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Display-id (default 0)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/token/request": {
+      "get": {
+        "summary": "Bed om adgangstokenet (fra 1.4)",
+        "description": "Bed om adgangstokenet (fra 1.4). Telefonen viser en notifikation »<client> beder om adgangstokenet« med Godkend/Afvis; intet endpoint kan godkende. Er der intet token, SÆTTER en godkendelse et (`new` hvis gyldigt, ellers et genereret på 32 tegn); findes der et, UDLEVERER godkendelsen det, og `new` ignoreres. Hent svaret med /token/status. Højst én anmodning ad gangen; den udløber efter 120 s. ⛔ På en enhed UDEN token er godkendelsen intet værn: hele API'et er åbent, også /rpc, så enhver peer kan selv trykke Godkend. Den beskytter først når et token er sat.",
+        "tags": [
+          "Adgangstoken"
+        ],
+        "operationId": "token_request",
+        "responses": {
+          "200": {
+            "description": "{\"id\":\"<32 hex>\",\"expires_in\":120} (429 hvis en anden anmodning optager pladsen, 503 hvis notifikationer er slået fra på telefonen)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "client",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Navn vist i notifikationen; [A-Za-z0-9 ._-], højst 32 tegn"
+          },
+          {
+            "name": "new",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Foreslået token (alfanumerisk, 24-128 tegn); bruges kun hvis enheden intet token har"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/token/status": {
+      "get": {
+        "summary": "Status for en anmodning fra /token/request",
+        "description": "Status for en anmodning fra /token/request. Tokenet udleveres præcis én gang; derefter svarer id'et `expired`. Et ukendt id svarer også `expired`. Poll fx hvert 2. sekund.",
+        "tags": [
+          "Adgangstoken"
+        ],
+        "operationId": "token_status",
+        "responses": {
+          "200": {
+            "description": "{\"status\":\"pending\"} | {\"status\":\"denied\"} | {\"status\":\"expired\"} | {\"status\":\"approved\",\"token\":\"...\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Id'et fra /token/request"
+          }
+        ],
+        "security": []
+      }
+    },
+    "/token/set": {
+      "get": {
+        "summary": "Skift et EKSISTERENDE token (fra 1.4)",
+        "description": "Skift et EKSISTERENDE token (fra 1.4). Kræver det nuværende token. Gælder straks, uden genstart. Findes der intet token, svares 409: brug /token/request eller feltet i appen.",
+        "tags": [
+          "Adgangstoken"
+        ],
+        "operationId": "token_set",
+        "responses": {
+          "200": {
+            "description": "{\"ok\":true} (401 uden gyldigt token, 409 hvis intet token er sat, 400 ved ugyldigt new)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "new",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nyt token, alfanumerisk, 24-128 tegn"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/wd": {
+      "get": {
+        "summary": "Trigger genoprettelse af Wireless Debugging via a11y og returnér ip:port (Android 11+)",
+        "description": "Trigger genoprettelse af Wireless Debugging via a11y og returnér ip:port (Android 11+).",
+        "tags": [
+          "Management"
+        ],
+        "operationId": "wd",
+        "responses": {
+          "200": {
+            "description": "{\"ip\":str,\"port\":int,\"ipport\":str}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/pair": {
+      "get": {
+        "summary": "Start Wireless-Debugging-parring og returnér parringsadresse + kode (Android 11+)",
+        "description": "Start Wireless-Debugging-parring og returnér parringsadresse + kode (Android 11+).",
+        "tags": [
+          "Management"
+        ],
+        "operationId": "pair",
+        "responses": {
+          "200": {
+            "description": "{\"addr\":str,\"code\":str}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/devoptions": {
+      "get": {
+        "summary": "Lås Udviklerindstillinger op via a11y (tapper Build-nummer)",
+        "description": "Lås Udviklerindstillinger op via a11y (tapper Build-nummer). probe=1 navigerer kun (taster ikke).",
+        "tags": [
+          "Management"
+        ],
+        "operationId": "devoptions",
+        "responses": {
+          "200": {
+            "description": "OK enabled | OK found | ERR ...",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "probe",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "1 = kun navigér/tjek"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/rpc": {
+      "get": {
+        "summary": "Send en rå kommando direkte til a11y-motoren (port 8127)",
+        "description": "Send en rå kommando direkte til a11y-motoren (port 8127). Dækker ALT. Vokabular: `ping`, `displays`, `rotation D`, `tap X Y D [ms]`, `swipe X1 Y1 X2 Y2 D [ms]`, `dump D`, `find|click|state|gettext D <regex>`, `launch D <action> [data] [pkg]`, `scroll D [b]`, `global <navn>`, `devoptions [probe]`, `text <streng>`, `enter`, `wake`. URL-encode hele kommandoen.",
+        "tags": [
+          "Generisk"
+        ],
+        "operationId": "rpc",
+        "responses": {
+          "200": {
+            "description": "Motorens rå svar",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "cmd",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Hele 8127-kommandoen, URL-encodet"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/sensors": {
+      "get": {
+        "summary": "Liste over enhedens sensorer (navn, type, vendor, strømforbrug, måleområde)",
+        "description": "Liste over enhedens sensorer (navn, type, vendor, strømforbrug, måleområde).",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "sensors",
+        "responses": {
+          "200": {
+            "description": "Array af sensor-objekter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/sensor": {
+      "get": {
+        "summary": "Læs den aktuelle værdi fra en sensor (registrerer kort en lytter og returnerer første måling)",
+        "description": "Læs den aktuelle værdi fra en sensor (registrerer kort en lytter og returnerer første måling). Typer: accelerometer, gyroscope, magnetic, light, proximity, pressure, gravity, linear, rotation, temperature, humidity, stepcounter.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "sensor",
+        "responses": {
+          "200": {
+            "description": "{\"sensor\",\"type\",\"values\":[...]}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Sensor-navn, fx light eller accelerometer"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/battery": {
+      "get": {
+        "summary": "Detaljeret batteri-status",
+        "description": "Detaljeret batteri-status.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "battery",
+        "responses": {
+          "200": {
+            "description": "{\"level\",\"charging\",\"status\",\"health\",\"plugged\",\"temperatureC\",\"voltageMv\",\"technology\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/torch": {
+      "get": {
+        "summary": "Tænd/sluk lommelygten (kamera-blitz)",
+        "description": "Tænd/sluk lommelygten (kamera-blitz). Kan fejle hvis kameraet er i brug.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "torch",
+        "responses": {
+          "200": {
+            "description": "OK (on) | ERR ...",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "on",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "1 = tænd, 0 = sluk"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/vibrate": {
+      "get": {
+        "summary": "Vibrér i et antal millisekunder",
+        "description": "Vibrér i et antal millisekunder.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "vibrate",
+        "responses": {
+          "200": {
+            "description": "OK (300ms)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Varighed i ms (default 300, maks 10000)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/volume": {
+      "get": {
+        "summary": "Læs alle lyd-streams' niveau/max (uden params), eller sæt et niveau (med stream+level)",
+        "description": "Læs alle lyd-streams' niveau/max (uden params), eller sæt et niveau (med stream+level).",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "volume",
+        "responses": {
+          "200": {
+            "description": "Læs: {\"media\":{\"level\",\"max\"},...} - Sæt: OK (media=7)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "media (default) | ring | alarm | notification | system | call"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Sæt dette niveau (udeladt = læs)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/ringer": {
+      "get": {
+        "summary": "Læs (uden params) eller sæt ringer-tilstand",
+        "description": "Læs (uden params) eller sæt ringer-tilstand. silent/vibrate kan kræve DND-adgang.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "ringer",
+        "responses": {
+          "200": {
+            "description": "Læs: {\"mode\":\"normal\"} - Sæt: OK (vibrate)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "normal | vibrate | silent (udeladt = læs)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/brightness": {
+      "get": {
+        "summary": "Læs (uden params) eller sæt skærm-lysstyrke (0-255)",
+        "description": "Læs (uden params) eller sæt skærm-lysstyrke (0-255). At sætte kræver WRITE_SETTINGS (\"Ændre systemindstillinger\" for Husk).",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "brightness",
+        "responses": {
+          "200": {
+            "description": "Læs: {\"level\",\"max\":255,\"auto\"} - Sæt: OK (128/255) | ERR needs WRITE_SETTINGS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "0-255 (udeladt = læs)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/display": {
+      "get": {
+        "summary": "Skærm-info: opløsning, tæthed, opdateringsfrekvens, rotation",
+        "description": "Skærm-info: opløsning, tæthed, opdateringsfrekvens, rotation.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "display",
+        "responses": {
+          "200": {
+            "description": "{\"width\",\"height\",\"densityDpi\",\"density\",\"refreshHz\",\"rotation\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/connectivity": {
+      "get": {
+        "summary": "Aktiv netværks-type + status",
+        "description": "Aktiv netværks-type + status.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "connectivity",
+        "responses": {
+          "200": {
+            "description": "{\"connected\",\"type\":\"wifi|cellular|ethernet|vpn|none\",\"metered\",\"validated\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/location": {
+      "get": {
+        "summary": "Seneste kendte GPS-position",
+        "description": "Seneste kendte GPS-position. Kræver at brugeren har givet Husk Lokations-tilladelse.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "location",
+        "responses": {
+          "200": {
+            "description": "{\"lat\",\"lon\",\"accuracyM\",\"altitude\",\"time\",\"provider\"} | ERR ...",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/mic": {
+      "get": {
+        "summary": "Aktuelt mikrofon-niveau (max amplitude over et kort sample; gemmer IKKE lyd)",
+        "description": "Aktuelt mikrofon-niveau (max amplitude over et kort sample; gemmer IKKE lyd). Kræver Mikrofon-tilladelse.",
+        "tags": [
+          "Hardware"
+        ],
+        "operationId": "mic",
+        "responses": {
+          "200": {
+            "description": "{\"amplitude\":0-32767,\"max\":32767} | ERR ...",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/motion": {
+      "get": {
+        "summary": "Konfigurér bevægelses-alarm: detektér bevægelse i kamera-/skærm-feed og send en push (ntfy) med et live-snapshot",
+        "description": "Konfigurér bevægelses-alarm: detektér bevægelse i kamera-/skærm-feed og send en push (ntfy) med et live-snapshot. Gør telefonen til et gratis, privat sikkerhedskamera der selv alarmerer. Uden parametre returneres blot den nuværende config.",
+        "tags": [
+          "Bevægelse"
+        ],
+        "operationId": "motion",
+        "responses": {
+          "200": {
+            "description": "{\"enabled\",\"ntfyServer\",\"ntfyTopic\",\"sensitivity\",\"lastNtfy\"}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "on",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Slå alarmen til/fra"
+          },
+          {
+            "name": "topic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ntfy-emne der modtager push (tom = kun /events-log, ingen push)"
+          },
+          {
+            "name": "server",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ntfy-server (default https://ntfy.sh; KUN https accepteres)"
+          },
+          {
+            "name": "sensitivity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Følsomhed (10 = mest følsom)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Seneste bevægelses-hændelser (nyeste først, op til 50)",
+        "description": "Seneste bevægelses-hændelser (nyeste først, op til 50).",
+        "tags": [
+          "Bevægelse"
+        ],
+        "operationId": "events",
+        "responses": {
+          "200": {
+            "description": "[{\"t\":epoch-ms,\"source\":\"camera|screen\",\"change\":pct}, ...]",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared token; required only if one is configured on the device."
+          }
+        ]
+      }
+    }
+  }
+}
