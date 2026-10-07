@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/servers/scan_screen.dart';
 import '../features/servers/server_form_screen.dart';
+import '../features/settings/settings_screen.dart';
 
 GoRouter createRouter() => GoRouter(
       routes: [
@@ -15,6 +16,7 @@ GoRouter createRouter() => GoRouter(
           ),
         ),
         GoRoute(path: '/servers/scan', builder: (context, state) => const ScanScreen()),
+        GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
         GoRoute(
           path: '/servers/:id/edit',
           builder: (context, state) => ServerFormScreen(serverId: state.pathParameters['id']),
