@@ -52,7 +52,15 @@ class _TokenToolState extends ConsumerState<TokenTool> {
     final api = ref.read(apiProvider(widget.serverId));
     try {
       await api.setToken(token);
-      await ref.read(serversProvider.notifier).setToken(widget.serverId, token);
+      try {
+        await ref.read(serversProvider.notifier).setToken(widget.serverId, token);
+      } catch (_) {
+        // The phone already uses the new token: keep it in the field so the user can copy it.
+        if (mounted) {
+          _report('The phone now uses the new token but saving it failed. Copy it before leaving this page.', error: true);
+        }
+        return;
+      }
       _newToken.clear();
       if (mounted) _report('Token changed and saved.');
     } on HttpStatusException catch (e) {

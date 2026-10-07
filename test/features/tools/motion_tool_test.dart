@@ -60,4 +60,29 @@ void main() {
           sensitivity: any(named: 'sensitivity'),
         ));
   });
+
+  testWidgets('after saving, the form shows the saved state while the reload is pending', (tester) async {
+    var calls = 0;
+    when(() => api.motion()).thenAnswer((_) async {
+      calls++;
+      if (calls == 1) {
+        return const MotionConfig(enabled: false, ntfyServer: 'https://ntfy.sh', ntfyTopic: '', sensitivity: 5, lastNtfy: '');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      return const MotionConfig(enabled: true, ntfyServer: 'https://ntfy.sh', ntfyTopic: 'my-topic', sensitivity: 5, lastNtfy: '12:00');
+    });
+    await pump(tester);
+    await tester.tap(find.widgetWithText(SwitchListTile, 'Motion alarm'));
+    await tester.enterText(find.widgetWithText(TextField, 'ntfy topic'), 'my-topic');
+    await tester.tap(find.text('Save'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.widget<SwitchListTile>(find.widgetWithText(SwitchListTile, 'Motion alarm')).value, isTrue);
+    expect(find.widgetWithText(TextField, 'my-topic'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.widgetWithText(SwitchListTile, 'Motion alarm')).value, isTrue);
+    expect(find.widgetWithText(TextField, 'my-topic'), findsOneWidget);
+    expect(find.text('12:00'), findsOneWidget);
+    expect(calls, 2);
+  });
 }

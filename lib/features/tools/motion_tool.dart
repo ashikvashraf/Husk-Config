@@ -59,6 +59,7 @@ class _MotionToolState extends ConsumerState<MotionTool> {
             sensitivity: _sensitivity.round(),
           );
       messenger.showSnackBar(const SnackBar(content: Text('Motion alarm saved')));
+      // Re-apply the server state once the fresh config arrives (build ignores the stale value while reloading).
       _loaded = false;
       ref.invalidate(motionProvider(widget.serverId));
     } on HuskException catch (e) {
@@ -74,8 +75,8 @@ class _MotionToolState extends ConsumerState<MotionTool> {
     ref.watch(apiProvider(id));
     final config = ref.watch(motionProvider(id));
     final events = ref.watch(eventsProvider(id));
-    final loaded = config.value;
-    if (loaded != null && !_loaded) _load(loaded);
+    final fresh = config.value;
+    if (!_loaded && fresh != null && !config.isLoading && !config.hasError) _load(fresh);
 
     return ListView(padding: const EdgeInsets.all(16), children: [
       SectionCard(
