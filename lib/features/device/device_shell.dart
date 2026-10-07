@@ -7,6 +7,7 @@ import '../camera/camera_tab.dart';
 import '../dashboard/server_status.dart';
 import '../screen/screen_tab.dart';
 import '../servers/servers_controller.dart';
+import '../tools/tools_tab.dart';
 import 'overview_tab.dart';
 
 enum DeviceTab { overview, camera, screen, tools }
@@ -53,7 +54,7 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
         DeviceTab.overview => OverviewTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.camera => CameraTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
         DeviceTab.screen => ScreenTab(key: ValueKey(widget.serverId), serverId: widget.serverId),
-        DeviceTab.tools => const _TabPlaceholder('Tools'),
+        DeviceTab.tools => ToolsTab(serverId: widget.serverId),
       };
 
   @override
@@ -122,14 +123,4 @@ class _DeviceShellState extends ConsumerState<DeviceShell> {
             ),
     );
   }
-}
-
-/// Stand-in for tabs implemented in Tasks 18, 19 and 21.
-class _TabPlaceholder extends StatelessWidget {
-  const _TabPlaceholder(this.name);
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) => Center(child: Text('$name is not available yet.'));
 }
