@@ -7,6 +7,12 @@
 // on the Screen tab), read-only PhoneProbe GETs, /key, and two raw GETs:
 // /wake and /launch?action=android.settings.SETTINGS. Settings is only
 // opened, scrolled and backed out of. Screenshot/Stream quality are never used.
+//
+// Click mapping (fix 703f636): the app maps clicks onto the streamed frame as
+// drawn (BoxFit.contain of the decoded frame), scaled to the full real screen
+// from /info (1080x2220 on the SM-A750F), NOT onto /display (1080x2112, which
+// leaves out the 108 px nav bar). This test computes where a phone pixel is
+// drawn from the decoded frame and /info only, independent of the app's mapper.
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -17,7 +23,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huskconfig/core/storage/app_settings.dart';
-import 'package:huskconfig/features/screen/coordinate_mapper.dart';
 import 'package:huskconfig/features/screen/gesture_layer.dart';
 import 'package:huskconfig/shared/widgets/mjpeg_view.dart';
 
@@ -76,9 +81,11 @@ void main() {
     }
     final blocked = adapter?.blocked ?? const <Uri>[];
     if (blocked.isNotEmpty) steps.bad.add('harness blocked requests: $blocked');
-    check('S11', steps.bad.isEmpty ? 'PASS' : 'FAIL', steps.summary());
+    final status = steps.bad.isNotEmpty ? 'FAIL' : (steps.blocked.isNotEmpty ? 'BLOCKED' : 'PASS');
+    check('S11', status, steps.summary());
     if (fatal != null) Error.throwWithStackTrace(fatal, fatalTrace!);
     expect(steps.bad, isEmpty, reason: steps.summary());
+    expect(steps.blocked, isEmpty, reason: 'S11 is BLOCKED (not a pass): ${steps.summary()}');
   }, timeout: _longTimeout);
 
   testWidgets('S11b Fullscreen opens and closes; tab shows "Showing fullscreen" meanwhile (one stream)', (tester) async {
@@ -192,7 +199,12 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
   final flags = await tester.runAsync(() => probe.getJson('/flags')) as Map<String, dynamic>;
   if (flags['screen'] != true) throw TestFailure('screen sharing is off on the phone (/flags.screen=${flags['screen']})');
   final display = await tester.runAsync(() => probe.getJson('/display')) as Map<String, dynamic>;
-  print('S11 /display ${display['width']}x${display['height']} rotation=${display['rotation']}');
+  final screen = await _screenSize(tester);
+  print('S11 /display ${display['width']}x${display['height']} rotation=${display['rotation']}; /info screen (real /tap space) '
+      '${screen.width.toInt()}x${screen.height.toInt()}');
+  if (screen != _realScreen) {
+    throw TestFailure('/info screen is ${screen.width.toInt()}x${screen.height.toInt()}, expected the SM-A750F full screen 1080x2220');
+  }
 
   final adapter = await _openScreenTab(tester);
 
@@ -202,21 +214,19 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
     await pumpFor(tester, const Duration(seconds: 2));
     final fpsFinder = find.textContaining(' fps');
     final fps = fpsFinder.evaluate().isEmpty ? '?' : tester.widget<Text>(fpsFinder).data;
-    final dev = await _deviceSize(tester);
     final frameAspect = image.width / image.height;
-    final devAspect = dev.width / dev.height;
-    final info = await _real(tester, () => probe.getJson('/info')) as Map<String, dynamic>;
-    final real = info['screen'] as Map<String, dynamic>?;
+    final realAspect = screen.width / screen.height;
     await snap(tester, _group, 'S11-1');
-    final off = (frameAspect - devAspect).abs() / devAspect;
+    final off = (frameAspect - realAspect).abs() / realAspect;
     if (off >= 0.03) {
       throw TestFailure(
-        'frame aspect differs from /display by ${(off * 100).toStringAsFixed(1)}% (limit 3%): frame ${image.width}x${image.height} '
-        '(aspect ${frameAspect.toStringAsFixed(4)}) vs /display ${dev.width.toInt()}x${dev.height.toInt()} (aspect ${devAspect.toStringAsFixed(4)}) '
-        'which the app uses to map clicks; /info screen (real /tap pixel space) = ${real?['width']}x${real?['height']}',
+        'frame aspect differs from the real screen by ${(off * 100).toStringAsFixed(1)}% (limit 3%): frame ${image.width}x${image.height} '
+        '(aspect ${frameAspect.toStringAsFixed(4)}) vs /info screen ${screen.width.toInt()}x${screen.height.toInt()} (aspect ${realAspect.toStringAsFixed(4)})',
       );
     }
-    return 'MjpegView shows a decoded frame ${image.width}x${image.height} (matches /display ${dev.width.toInt()}x${dev.height.toInt()}), overlay "$fps", /screen requests=${adapter.count('/screen')}';
+    return 'MjpegView shows a decoded frame ${image.width}x${image.height} (aspect ${frameAspect.toStringAsFixed(4)}, matches /info screen '
+        '${screen.width.toInt()}x${screen.height.toInt()} within ${(off * 100).toStringAsFixed(2)}%; /display ${display['width']}x${display['height']} not used), '
+        'drawn at ${_drawnFrame(tester)} in view ${tester.getRect(find.byType(GestureLayer))}, overlay "$fps", /screen requests=${adapter.count('/screen')}';
   });
 
   // ---- Precondition: Settings can only come up when the phone is unlocked.
@@ -240,10 +250,13 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
         'phone is on its lock screen (secure keyguard; swipe-up shows a FLAG_SECURE bouncer), a human must unlock it; '
         '/dump=${lock.dump.trim().split('\n').take(2).join(' | ')}';
     print('S11 precondition: $why');
+    // What the APP sends is still checked (the request log); the phone's reaction is not observable.
+    await _mappingSteps(tester, steps, adapter, observe: false);
     for (final name in dependent) {
-      steps.notRun(name, 'phone locked, see S11 precondition');
+      steps.blockedStep(name, 'phone locked, see S11 precondition');
     }
-    steps.bad.add('precondition: $why');
+    steps.blockedStep('phone reaction to the centre / bottom-edge clicks', 'phone locked');
+    steps.blocked.add('precondition: $why');
     return adapter;
   }
 
@@ -260,10 +273,8 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
     steps.notRun('nav bar Back', 'open Settings failed');
   } else {
     await steps.run('tap lands on the right element', () async {
-      final dev = await _deviceSize(tester);
       final tapsBefore = adapter.count('/tap');
-      final global = _toGlobal(tester, dev, main.aAt);
-      final visible = _visibleClick(tester, dev, main.aAt);
+      final global = _toGlobal(tester, screen, main.aAt);
       await tester.tapAt(global.global);
       await pumpFor(tester, const Duration(milliseconds: 300));
       final sent = adapter.log.where((u) => u.path == '/tap').toList();
@@ -275,9 +286,8 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
       final gone = await _until(tester, () async => !await _exists(main.b));
       await snap(tester, _group, 'S11-2');
       expect(gone, isTrue, reason: 'after tapping "${main.a}" the Settings main row "${main.b}" should be gone (subpage open)');
-      return 'element "${main.a}" centre ${main.aAt} -> view ${global.global} (viewSize=${global.view}, content=${global.content}); '
-          'app sent /tap?x=$sx&y=$sy; phone opened the subpage ("${main.b}" exists 1 -> 0); '
-          'NOTE where the frame actually draws the element: $visible';
+      return 'element "${main.a}" centre ${main.aAt} is drawn at ${global.global} (drawn frame ${global.drawn}); '
+          'clicking it made the app send /tap?x=$sx&y=$sy; phone opened the subpage ("${main.b}" exists 1 -> 0)';
     });
 
     await steps.run('nav bar Back', () async {
@@ -288,15 +298,19 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
     });
   }
 
+  // ---- Decisive mapping checks, with the phone's reaction observed.
+  await _mappingSteps(tester, steps, adapter, observe: true);
+
   // ---- swipe + wheel
   await steps.run('swipe reaches the phone (/dump changes)', () async {
-    final dev = await _deviceSize(tester);
+    await _settingsMain(tester); // the bottom-edge check pressed Home
+    await pumpFor(tester, const Duration(seconds: 1));
     final base = await _dump(tester);
     await pumpFor(tester, const Duration(milliseconds: 400));
     final noise = await _dump(tester);
     final swipesBefore = adapter.count('/swipe');
-    final from = _toGlobal(tester, dev, (x: dev.width ~/ 2, y: (dev.height * 0.75).round())).global;
-    final to = _toGlobal(tester, dev, (x: dev.width ~/ 2, y: (dev.height * 0.30).round())).global;
+    final from = _toGlobal(tester, screen, (x: screen.width ~/ 2, y: (screen.height * 0.75).round())).global;
+    final to = _toGlobal(tester, screen, (x: screen.width ~/ 2, y: (screen.height * 0.30).round())).global;
     await _drag(tester, from, to);
     String last = base;
     final changed = await _until(tester, () async {
@@ -312,7 +326,7 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
   });
 
   await steps.run('mouse wheel scroll reaches the phone (/dump changes)', () async {
-    final centre = _contentCentre(tester, await _deviceSize(tester));
+    final centre = _drawnFrame(tester).center;
     final before = adapter.log.where((u) => u.path == '/scroll').length;
     final base = await _dump(tester);
     await pumpFor(tester, const Duration(milliseconds: 400));
@@ -349,16 +363,15 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
   // ---- Esc acts as Back after focusing the view
   await steps.run('Esc acts as Back after focusing the view', () async {
     final m = await _settingsMain(tester);
-    final dev = await _deviceSize(tester);
-    await tester.tapAt(_toGlobal(tester, dev, m.aAt).global);
+    await tester.tapAt(_toGlobal(tester, screen, m.aAt).global);
     final opened = await _until(tester, () async => !await _exists(m.b));
     expect(opened, isTrue, reason: 'subpage "${m.a}" did not open');
     // Focus the view by tapping a letterbox bar (no phone tap is sent).
     final rect = tester.getRect(find.byType(GestureLayer));
-    final content = CoordinateMapper(viewSize: rect.size, deviceSize: dev).contentRect;
-    expect(content.left, greaterThan(8), reason: 'no letterbox bar to focus the view safely');
+    final drawn = _drawnFrame(tester);
+    expect(drawn.left - rect.left, greaterThan(8), reason: 'no letterbox bar to focus the view safely');
     final tapsBefore = adapter.count('/tap');
-    await tester.tapAt(Offset(rect.left + content.left / 2, rect.center.dy));
+    await tester.tapAt(Offset((rect.left + drawn.left) / 2, rect.center.dy));
     await pumpFor(tester, const Duration(milliseconds: 300));
     expect(adapter.count('/tap'), tapsBefore, reason: 'focusing tap must not reach the phone');
     final backsBefore = _keyCount(adapter, 'back');
@@ -407,8 +420,7 @@ Future<CountingAdapter> _s11(WidgetTester tester, _Steps steps) async {
     final m = await _settingsMain(tester);
     final search = await _real(tester, () => probe.find(r'(?i)^search( settings)?$'));
     expect(search, isNotNull, reason: 'no "Search" element found on the Settings main page');
-    final dev = await _deviceSize(tester);
-    await tester.tapAt(_toGlobal(tester, dev, search!).global);
+    await tester.tapAt(_toGlobal(tester, screen, search!).global);
     final opened = await _until(tester, () async => !await _exists(m.b), timeout: const Duration(seconds: 8));
     expect(opened, isTrue, reason: 'Settings search page did not open');
     await pumpFor(tester, const Duration(seconds: 1));
@@ -528,9 +540,14 @@ Future<({bool locked, String dump})> _lockState(WidgetTester t) async {
   return (locked: locked, dump: dump);
 }
 
-Future<Size> _deviceSize(WidgetTester t) async {
-  final d = await _real(t, () => probe.getJson('/display')) as Map<String, dynamic>;
-  return Size((d['width'] as num).toDouble(), (d['height'] as num).toDouble());
+/// The SM-A750F's full screen in /tap pixels (/info screen, nav bar included).
+const Size _realScreen = Size(1080, 2220);
+
+/// /info's screen size: the real /tap and /swipe pixel space.
+Future<Size> _screenSize(WidgetTester t) async {
+  final info = await _real(t, () => probe.getJson('/info')) as Map<String, dynamic>;
+  final s = info['screen'] as Map<String, dynamic>;
+  return Size((s['width'] as num).toDouble(), (s['height'] as num).toDouble());
 }
 
 Future<String> _dump(WidgetTester t) => _real(t, () => probe.getText('/dump', {'d': '0'}));
@@ -601,41 +618,93 @@ Future<({String a, ({int x, int y}) aAt, String b})> _settingsMain(WidgetTester 
   throw TestFailure('could not get the Settings main list on screen (looked for rows $_mainRows)');
 }
 
-/// Global position of device pixel [p] on the on-screen Screen view, using
-/// CoordinateMapper's inverse (device -> letterboxed view).
-({Offset global, Size view, Rect content}) _toGlobal(WidgetTester t, Size device, ({int x, int y}) p) {
-  final rect = t.getRect(find.byType(GestureLayer));
-  final mapper = CoordinateMapper(viewSize: rect.size, deviceSize: device);
-  final c = mapper.contentRect;
-  final local = Offset(c.left + p.x / device.width * c.width, c.top + p.y / device.height * c.height);
-  final back = mapper.toDevice(local);
-  if (back == null || (back.x - p.x).abs() > 1 || (back.y - p.y).abs() > 1) {
-    throw TestFailure('CoordinateMapper round trip failed for $p: view $local maps back to $back (view ${rect.size}, device $device)');
+/// Global rect where the live frame is actually drawn: BoxFit.contain of the
+/// decoded frame inside the RawImage box (alignment centre). Computed from the
+/// frame alone, independent of the app's CoordinateMapper.
+Rect _drawnFrame(WidgetTester t) {
+  final image = t.widget<RawImage>(_frame).image!;
+  final box = t.getRect(_frame);
+  final fitted = applyBoxFit(BoxFit.contain, Size(image.width.toDouble(), image.height.toDouble()), box.size);
+  return Alignment.center.inscribe(fitted.destination, box);
+}
+
+/// Global position where phone pixel [p] (in the full /info [screen] space,
+/// which the frame covers) is drawn, i.e. where a user would click it.
+({Offset global, Rect drawn}) _toGlobal(WidgetTester t, Size screen, ({int x, int y}) p) {
+  final drawn = _drawnFrame(t);
+  return (global: drawn.topLeft + Offset(p.x / screen.width * drawn.width, p.y / screen.height * drawn.height), drawn: drawn);
+}
+
+/// The decisive S11 mapping checks (fix 703f636), read from the request log:
+/// a click at the visual centre of the drawn frame sends /tap ~(540, 1110), and
+/// a click near its bottom edge sends y > 2112 (the nav bar strip that
+/// /display's 1080x2112 leaves out). With [observe] the phone's reaction is
+/// also verified: the bottom-centre click lands on the nav bar's Home button
+/// and leaves Settings.
+Future<void> _mappingSteps(WidgetTester tester, _Steps steps, CountingAdapter adapter, {required bool observe}) async {
+  ({int x, int y}) lastTap() {
+    final u = adapter.log.lastWhere((u) => u.path == '/tap');
+    return (x: int.parse(u.queryParameters['x']!), y: int.parse(u.queryParameters['y']!));
   }
-  return (global: rect.topLeft + local, view: rect.size, content: c);
-}
 
-/// Evidence only (no input sent): where the live frame actually draws device
-/// pixel [p] (BoxFit.contain of the decoded frame, whose pixels follow /info
-/// screen), and which device pixel the app would send for a click there.
-String _visibleClick(WidgetTester t, Size device, ({int x, int y}) p) {
-  final image = t.widget<RawImage>(_frame).image;
-  if (image == null) return 'no frame';
-  final rect = t.getRect(find.byType(GestureLayer));
-  final frame = Size(image.width.toDouble(), image.height.toDouble());
-  final drawn = CoordinateMapper(viewSize: rect.size, deviceSize: frame).contentRect;
-  // The frame is a scaled copy of the full real screen (/info screen size).
-  final realHeight = device.width * frame.height / frame.width;
-  final local = Offset(drawn.left + p.x / device.width * drawn.width, drawn.top + p.y / realHeight * drawn.height);
-  final sent = CoordinateMapper(viewSize: rect.size, deviceSize: device).toDevice(local);
-  return 'frame ${image.width}x${image.height} drawn at $drawn (app maps with /display $device); a user click on the drawn element '
-      'at view ${rect.topLeft + local} would send $sent instead of $p';
-}
+  await steps.run('click at the visual centre of the drawn frame sends /tap ~(540,1110)', () async {
+    final image = tester.widget<RawImage>(_frame).image!;
+    final drawn = _drawnFrame(tester);
+    final base = observe ? await _dump(tester) : '';
+    final before = adapter.count('/tap');
+    await tester.tapAt(drawn.center);
+    await pumpFor(tester, const Duration(milliseconds: 400));
+    expect(adapter.count('/tap'), before + 1, reason: 'one /tap request for the click');
+    final t = lastTap();
+    var phone = 'phone reaction BLOCKED (locked)';
+    if (observe) {
+      String last = base;
+      await _until(tester, () async {
+        last = await _dump(tester);
+        return _tokenDiff(base, last) >= 2;
+      });
+      phone = 'phone /dump tokenDiff=${_tokenDiff(base, last)} after the tap';
+    }
+    await snap(tester, _group, 'S11-centre');
+    expect((t.x - 540).abs(), lessThanOrEqualTo(2), reason: 'centre click sent x=${t.x}, expected ~540');
+    expect((t.y - 1110).abs(), lessThanOrEqualTo(2), reason: 'centre click sent y=${t.y}, expected ~1110 (the old /display mapping sent 1056)');
+    return 'frame ${image.width}x${image.height} drawn at $drawn; click at its centre ${drawn.center} -> app sent /tap?x=${t.x}&y=${t.y} '
+        '(expected ~540,1110; old /display mapping gave 1056); $phone';
+  });
 
-Offset _contentCentre(WidgetTester t, Size device) {
-  final rect = t.getRect(find.byType(GestureLayer));
-  final c = CoordinateMapper(viewSize: rect.size, deviceSize: device).contentRect;
-  return rect.topLeft + c.center;
+  await steps.run('click near the bottom edge of the drawn frame sends /tap y > 2112 (nav bar reachable)', () async {
+    ({String a, ({int x, int y}) aAt, String b})? m;
+    if (observe) {
+      if (!(await _real(tester, () => _exists('^${RegExp.escape(_mainRows.first)}\$')) ||
+          await _real(tester, () => _exists('^${RegExp.escape(_mainRows[1])}\$')))) {
+        await tester.tap(find.byTooltip('Back'));
+        await pumpFor(tester, const Duration(milliseconds: 800));
+      }
+      m = await _settingsMain(tester);
+      await pumpFor(tester, const Duration(seconds: 1));
+    }
+    final drawn = _drawnFrame(tester);
+    final at = Offset(drawn.center.dx, drawn.bottom - 2);
+    final before = adapter.count('/tap');
+    await tester.tapAt(at);
+    await pumpFor(tester, const Duration(milliseconds: 400));
+    expect(adapter.count('/tap'), before + 1, reason: 'one /tap request for the click');
+    final t = lastTap();
+    var phone = 'phone reaction BLOCKED (locked)';
+    bool? left;
+    if (observe) {
+      left = await _until(tester, () async => !await _exists('^${RegExp.escape(m!.a)}\$') && !await _exists('^${RegExp.escape(m.b)}\$'));
+      phone = left
+          ? 'phone: nav bar Home pressed, Settings left ("${m!.a}"/"${m.b}" exist 1 -> 0)'
+          : 'phone: Settings rows "${m!.a}"/"${m.b}" still present (nav bar not hit)';
+    }
+    await snap(tester, _group, 'S11-navbar');
+    expect(t.y, greaterThan(2112), reason: 'bottom-edge click sent y=${t.y}; must be inside the nav bar strip (> 2112)');
+    expect(t.y, lessThan(2220), reason: 'bottom-edge click sent y=${t.y}, outside the 2220 px screen');
+    expect((t.x - 540).abs(), lessThanOrEqualTo(2), reason: 'bottom-centre click sent x=${t.x}, expected ~540');
+    if (observe) expect(left, isTrue, reason: phone);
+    return 'click at $at (2 px above the drawn bottom ${drawn.bottom}) -> app sent /tap?x=${t.x}&y=${t.y} (> 2112, nav bar strip 2112..2219); $phone';
+  });
 }
 
 Future<void> _drag(WidgetTester t, Offset from, Offset to) async {
@@ -664,6 +733,13 @@ class _Steps {
   final String id;
   final List<String> ok = [];
   final List<String> bad = [];
+  final List<String> blocked = [];
+
+  /// Records a sub-step that cannot be observed (BLOCKED: never a pass).
+  void blockedStep(String name, String why) {
+    blocked.add('$name: BLOCKED ($why)');
+    print('STEP $id BLOCKED $name: $why');
+  }
 
   /// Records a sub-step that could not run (counts as failed: never a pass).
   void notRun(String name, String why) {
@@ -685,7 +761,11 @@ class _Steps {
     }
   }
 
-  String summary() => [if (ok.isNotEmpty) 'PASSED: ${ok.join(' ; ')}', if (bad.isNotEmpty) 'FAILED: ${bad.join(' ; ')}'].join(' || ');
+  String summary() => [
+        if (ok.isNotEmpty) 'PASSED: ${ok.join(' ; ')}',
+        if (bad.isNotEmpty) 'FAILED: ${bad.join(' ; ')}',
+        if (blocked.isNotEmpty) 'BLOCKED: ${blocked.join(' ; ')}',
+      ].join(' || ');
 }
 
 // ------------------------------------------------------------ raw phone I/O

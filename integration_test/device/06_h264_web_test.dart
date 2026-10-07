@@ -16,7 +16,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huskconfig/core/storage/app_settings.dart';
-import 'package:huskconfig/features/screen/coordinate_mapper.dart';
 import 'package:huskconfig/features/screen/gesture_layer.dart';
 import 'package:huskconfig/features/screen/h264_view.dart';
 import 'package:huskconfig/features/screen/web_control_view.dart';
@@ -335,57 +334,30 @@ void main() {
   });
 
   // ----------------------------------------------------------------- T20b
-  testWidgets('T20b taps over the H.264 view reach the phone at the right coordinates', (tester) async {
+  // Fix 703f636: the gesture layer maps clicks onto the streamed frame scaled
+  // to /info's full screen (1080x2220 on the SM-A750F), not /display
+  // (1080x2112, which leaves out the nav bar). Same decisive centre /
+  // bottom-edge checks as S11, here over the H.264 video.
+  testWidgets('T20b clicks at the centre and bottom edge of the H.264 video send /tap in the full /info screen space', (tester) async {
     await _guard('T20b', () async {
       final display = await tester.runAsync(() => _probe.getJson('/display')) as Map<String, dynamic>;
       final dispW = (display['width'] as num).toInt(), dispH = (display['height'] as num).toInt();
-      // /info screen = the phone's real full-screen pixel size, the space /find
-      // reports in and /tap acts in (it includes the nav bar; /display does not).
+      // /info screen = the phone's real full-screen pixel size, the space /tap
+      // acts in (it includes the nav bar; /display does not).
       final info = await tester.runAsync(() => _probe.getJson('/info')) as Map<String, dynamic>;
       final scr = info['screen'] as Map<String, dynamic>;
       final realW = (scr['width'] as num).toInt(), realH = (scr['height'] as num).toInt();
       await _prepPhone(tester);
-      // Settings reopens at its last scroll position (earlier tests scroll it),
-      // which can leave the search affordance above the screen; scroll back to the top.
-      await tester.runAsync(() async {
-        for (var i = 0; i < 5; i++) {
-          try {
-            await _phone('/scroll', {'d': '0', 'dir': 'back'});
-          } catch (_) {}
-          await Future<void>.delayed(const Duration(milliseconds: 500));
-        }
-        await Future<void>.delayed(const Duration(seconds: 1));
-      });
-
-      // Target: the Settings search affordance (opens search only; harmless).
-      // Only on-screen targets count (a node can be reported at negative y when off-screen).
-      ({int x, int y})? target;
-      String how = '';
-      final rejected = <String>[];
-      for (final re in [r'(?i)^search', r'(?i)search']) {
-        final t = await tester.runAsync<({int x, int y})?>(() => _probe.find(re));
-        if (t == null) continue;
-        if (t.x <= 0 || t.y <= 0 || t.x >= realW || t.y >= realH) {
-          rejected.add('find($re)=${t.x},${t.y} off-screen');
-          continue;
-        }
-        target = t;
-        how = 'find($re)';
-        break;
-      }
-      if (rejected.isNotEmpty) print('NOTE T20b rejected targets: ${rejected.join('; ')}');
-      if (target == null) {
-        // Fallback: centre of the screen (opens at most a Settings sub-page; Back + Home restore).
-        target = (x: realW ~/ 2, y: realH ~/ 2);
-        how = 'fallback centre';
-      }
-      final before = await tester.runAsync(() async {
-        try {
-          return await _probe.getText('/dump');
-        } catch (_) {
-          return null;
-        }
-      });
+      await _settingsTop(tester);
+      // Lock state: /dump on this phone can list only the Samsung Wallet
+      // overlay window even on the unlocked home screen, so it is not used.
+      // The phone counts as unlocked when the Settings main list just
+      // launched is visible to /find (a secure keyguard would hide it).
+      final rows0 = await _visibleRows(tester);
+      final locked = rows0.isEmpty;
+      final lockDump = locked ? await _dumpOrNull(tester) : null;
+      print('NOTE T20b /display ${dispW}x$dispH /info screen ${realW}x$realH; Settings rows on screen=${rows0.keys.toList()} -> locked=$locked'
+          '${locked ? ' (/dump: ${lockDump?.trim().split('\n').take(2).join(' | ')})' : ''}');
 
       final adapter = await pumpHuskApp(
         tester,
@@ -395,57 +367,108 @@ void main() {
       await _openScreenTab(tester);
       await pumpUntil(tester, find.byType(H264View), timeout: const Duration(seconds: 30));
       await pumpUntil(tester, find.byType(GestureLayer));
-      await pumpFor(tester, const Duration(seconds: 5)); // let the first frame/size arrive
       expect(_selectedMode(tester), {ScreenMode.h264});
 
-      final layerFinder = find.byType(GestureLayer);
-      final layer = tester.widget<GestureLayer>(layerFinder);
-      final rect = tester.getRect(layerFinder);
-      final deviceSize = layer.deviceSize;
-      // Where the app's own mapper would put the target (reported only: using
-      // it to aim the tap would make the check agree with itself by construction).
-      final appContent = CoordinateMapper(viewSize: rect.size, deviceSize: deviceSize).contentRect.shift(rect.topLeft);
-
       // Where the phone image is actually drawn: the video texture inside the
-      // Video widget (FittedBox contain of the decoded frame), in window coordinates.
+      // Video widget (FittedBox contain of the decoded frame), in window
+      // coordinates. Computed from the widget tree, not the app's mapper.
       final textureFinder = find.descendant(of: find.byType(Video), matching: find.byType(Texture));
       await pumpUntil(tester, textureFinder, timeout: const Duration(seconds: 20));
-      final drawn = tester.getRect(textureFinder);
-      final frameRect = tester.widget<Video>(find.byType(Video)).controller.rect.value;
-      final drawnAspect = drawn.width / drawn.height, realAspect = realW / realH;
-      final aspectOk = (drawnAspect - realAspect).abs() / realAspect < 0.01;
-      // The aimed point: the target's position on the visible phone image.
-      final global = Offset(
-        drawn.left + target.x / realW * drawn.width,
-        drawn.top + target.y / realH * drawn.height,
-      );
-      final geometry = 'video drawn at ${_r(drawn)} (frame ${frameRect?.width.toInt()}x${frameRect?.height.toInt()}, aspect ${drawnAspect.toStringAsFixed(4)} vs /info ${realW}x$realH ${realAspect.toStringAsFixed(4)}); '
-          'app tap-mapping rect ${_r(appContent)} for deviceSize ${deviceSize.width.toInt()}x${deviceSize.height.toInt()}';
-      print('NOTE T20b geometry: $geometry; aiming at window $global');
-      final lockedBefore = before != null && _looksLocked(before);
-      final sizeMatches = (deviceSize.width.toInt() == dispW && deviceSize.height.toInt() == dispH) ||
-          (deviceSize.width.toInt() == dispH && deviceSize.height.toInt() == dispW);
-
-      adapter.reset();
-      await snap(tester, _group, 'T20b-1');
-      await tester.tapAt(global);
-      await tester.pump(const Duration(milliseconds: 100));
-      final clock = Stopwatch()..start();
-      while (adapter.log.where((u) => u.path == '/tap').isEmpty && clock.elapsed < const Duration(seconds: 8)) {
+      Rect? frameRect() => tester.widget<Video>(find.byType(Video)).controller.rect.value;
+      final frameClock = Stopwatch()..start();
+      while ((frameRect() == null || frameRect()!.isEmpty) && frameClock.elapsed < const Duration(seconds: 20)) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      final taps = adapter.log.where((u) => u.path == '/tap').toList();
-      await pumpFor(tester, const Duration(milliseconds: 1500));
-      final after = await tester.runAsync(() async {
-        try {
-          return await _probe.getText('/dump');
-        } catch (_) {
-          return null;
-        }
-      });
-      await snap(tester, _group, 'T20b-2');
+      await pumpFor(tester, const Duration(seconds: 2)); // let the layout settle on the first frame
+      final frame = frameRect();
+      final drawn = tester.getRect(textureFinder);
+      final layer = tester.widget<GestureLayer>(find.byType(GestureLayer));
+      final drawnAspect = drawn.width / drawn.height, realAspect = realW / realH;
+      final aspectOk = (drawnAspect - realAspect).abs() / realAspect < 0.01;
+      final geometry = 'H.264 frame ${frame?.width.toInt()}x${frame?.height.toInt()} drawn at ${_r(drawn)} '
+          '(aspect ${drawnAspect.toStringAsFixed(4)} vs /info ${realW}x$realH ${realAspect.toStringAsFixed(4)}, match=$aspectOk); '
+          'app layer deviceSize ${layer.deviceSize.width.toInt()}x${layer.deviceSize.height.toInt()} (reported only)';
+      print('NOTE T20b geometry: $geometry');
+      await snap(tester, _group, 'T20b-1');
 
-      // Restore: back out of whatever the tap opened, then Home.
+      ({int x, int y, int n}) lastTap(int before) {
+        final taps = adapter.log.where((u) => u.path == '/tap').toList();
+        final q = taps.isEmpty ? const <String, String>{} : taps.last.queryParameters;
+        return (x: int.tryParse(q['x'] ?? '') ?? -1, y: int.tryParse(q['y'] ?? '') ?? -1, n: taps.length - before);
+      }
+
+      Future<void> waitTap(int before) async {
+        final clock = Stopwatch()..start();
+        while (adapter.count('/tap') <= before && clock.elapsed < const Duration(seconds: 8)) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        await pumpFor(tester, const Duration(milliseconds: 400));
+      }
+
+      // ---- centre
+      final cx = realW ~/ 2, cy = realH ~/ 2;
+      final rowsCentre = locked ? const <String, int>{} : await _visibleRows(tester);
+      var before = adapter.count('/tap');
+      await tester.tapAt(drawn.center);
+      await waitTap(before);
+      final c = lastTap(before);
+      final centreOk = c.n == 1 && (c.x - cx).abs() <= 2 && (c.y - cy).abs() <= 2;
+      String centrePhone = 'phone reaction BLOCKED (locked)';
+      bool? centreReacted;
+      if (!locked) {
+        // The element under the centre opens a Settings subpage: the main-list
+        // rows that were on screen go away.
+        final after = await _untilRows(tester, (rows) => !rows.keys.toSet().containsAll(rowsCentre.keys));
+        centreReacted = !after.keys.toSet().containsAll(rowsCentre.keys);
+        final under = rowsCentre.entries.isEmpty
+            ? 'none'
+            : (rowsCentre.entries.toList()..sort((a, b) => (a.value - cy).abs().compareTo((b.value - cy).abs()))).first;
+        centrePhone = 'phone: Settings main rows before ${rowsCentre.keys.toList()} (nearest to y=$cy: $under) -> after ${after.keys.toList()} '
+            '(${centreReacted ? 'subpage opened' : 'NO change'})';
+      }
+      await snap(tester, _group, 'T20b-centre');
+      final centreEv = 'click at drawn centre ${_o(drawn.center)} -> app sent /tap x=${c.x} y=${c.y} (count ${c.n}; expected ~$cx,$cy +-2; '
+          'the old /display mapping gave y=${dispH ~/ 2}); $centrePhone';
+      print('STEP T20b ${centreOk ? 'PASS' : 'FAIL'} centre: $centreEv');
+
+      // ---- bottom edge (nav bar strip, below /display's height)
+      if (!locked) {
+        // Back out of whatever the centre tap opened and reopen Settings, so the
+        // nav bar Home press is visible as Settings disappearing.
+        await tester.runAsync(() async {
+          try {
+            await _probe.key('back');
+          } catch (_) {}
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          await _phone('/launch', {'action': 'android.settings.SETTINGS'});
+          await Future<void>.delayed(const Duration(seconds: 2));
+        });
+      }
+      final rowsBottom = locked ? const <String, int>{} : await _visibleRows(tester);
+      final at = Offset(drawn.center.dx, drawn.bottom - 2);
+      before = adapter.count('/tap');
+      await tester.tapAt(at);
+      await waitTap(before);
+      final b = lastTap(before);
+      final bottomOk = b.n == 1 && b.y > dispH && b.y < realH && (b.x - cx).abs() <= 2;
+      String bottomPhone = 'phone reaction BLOCKED (locked)';
+      bool? bottomReacted;
+      if (!locked) {
+        // The nav bar's Home button is under the bottom-centre click: Settings
+        // leaves the screen (none of its main rows remain) and the launcher shows.
+        final after = await _untilRows(tester, (rows) => rows.isEmpty);
+        final launcher = await tester.runAsync(() => _probe.find(r'^Play Store$'));
+        bottomReacted = rowsBottom.isNotEmpty && after.isEmpty;
+        bottomPhone = 'phone: Settings main rows before ${rowsBottom.keys.toList()} -> after ${after.keys.toList()} '
+            '(${bottomReacted ? 'nav bar Home pressed, Settings left' : 'Settings still on screen, nav bar NOT hit'}); '
+            'launcher "Play Store" at ${launcher == null ? 'not found' : '${launcher.x},${launcher.y}'}';
+      }
+      await snap(tester, _group, 'T20b-navbar');
+      final bottomEv = 'click at ${_o(at)} (2 px above drawn bottom ${drawn.bottom.toStringAsFixed(1)}) -> app sent /tap x=${b.x} y=${b.y} '
+          '(count ${b.n}; expected $dispH < y < $realH, x ~$cx +-2); $bottomPhone';
+      print('STEP T20b ${bottomOk ? 'PASS' : 'FAIL'} bottom edge: $bottomEv');
+
+      // Restore: back out of whatever the taps opened, then Home.
       await tester.runAsync(() async {
         try {
           await _probe.key('back');
@@ -454,70 +477,139 @@ void main() {
       });
       await _phoneHome(tester);
 
-      if (taps.isEmpty) {
-        check('T20b', 'FAIL', 'no /tap request reached the phone after tapping the H.264 view at $global (target $how ${target.x},${target.y})');
-        fail('no /tap sent');
-      }
-      final q = taps.first.queryParameters;
-      final sx = int.tryParse(q['x'] ?? ''), sy = int.tryParse(q['y'] ?? '');
-      final dx = sx == null ? 999 : (sx - target.x).abs();
-      final dy = sy == null ? 999 : (sy - target.y).abs();
-      final coordsOk = dx <= 3 && dy <= 3 && (q['d'] ?? '0') == '0' && taps.length == 1;
-      final dumpChanged = before != null && after != null ? before != after : null;
-      final ev = 'target $how=${target.x},${target.y} in /info ${realW}x$realH space, aimed at its spot on the visible video; '
-          'app sent /tap x=$sx y=$sy d=${q['d']} (count ${taps.length}, off by $dx,$dy px; tolerance 3); '
-          'layer deviceSize ${deviceSize.width.toInt()}x${deviceSize.height.toInt()} ${sizeMatches ? 'matches' : 'DIFFERS from'} /display ${dispW}x$dispH; '
-          'drawn video aspect matches /info=$aspectOk; $geometry; phone locked before tap=$lockedBefore; phone UI changed after tap: $dumpChanged';
-      if (!coordsOk) {
-        check('T20b', 'FAIL', 'tap landed at the wrong coordinates: $ev');
-      } else if (lockedBefore) {
-        check('T20b', 'BLOCKED', 'coordinates correct but the phone is on its secure lock screen, so the phone-side effect cannot be shown (a human must unlock it): $ev');
-      } else if (dumpChanged == null) {
-        check('T20b', 'BLOCKED', 'coordinates correct but phone-side effect could not be read (/dump unavailable): $ev');
-      } else if (!dumpChanged) {
-        check('T20b', 'FAIL', 'coordinates sent correctly but the phone UI did not react: $ev');
-      } else {
+      final ev = 'centre: $centreEv; bottom edge: $bottomEv; $geometry; blocked=${adapter.blocked.length}';
+      if (!centreOk || !bottomOk || !aspectOk) {
+        check('T20b', 'FAIL', 'wrong /tap mapping over the H.264 view: $ev');
+      } else if (locked) {
+        check('T20b-app', 'PASS', 'app-side /tap coordinates correct: $ev');
+        check('T20b', 'BLOCKED', 'app-side PASS (correct /tap coordinates from the request log); phone-side reaction BLOCKED: '
+            'Settings could not be shown, the phone is on its lock screen (a human must unlock it): $ev');
+      } else if (centreReacted == true && bottomReacted == true) {
         check('T20b', 'PASS', ev);
+      } else {
+        check('T20b', 'FAIL', 'coordinates sent correctly but the phone UI did not react (centre=$centreReacted bottom=$bottomReacted): $ev');
       }
-      expect(taps.length, 1);
-      expect(coordsOk, isTrue, reason: ev);
+      expect(c.n, 1, reason: 'one /tap for the centre click');
+      expect(b.n, 1, reason: 'one /tap for the bottom-edge click');
+      expect(aspectOk, isTrue, reason: geometry);
+      expect((c.x - cx).abs(), lessThanOrEqualTo(2), reason: centreEv);
+      expect((c.y - cy).abs(), lessThanOrEqualTo(2), reason: centreEv);
+      expect(b.y, greaterThan(dispH), reason: bottomEv);
+      expect(b.y, lessThan(realH), reason: bottomEv);
+      expect((b.x - cx).abs(), lessThanOrEqualTo(2), reason: bottomEv);
+      if (!locked) {
+        expect(centreReacted, isTrue, reason: centreEv);
+        expect(bottomReacted, isTrue, reason: bottomEv);
+      }
       expect(adapter.blocked, isEmpty);
     });
   });
 
   // ----------------------------------------------------------------- T20c
-  testWidgets('T20c H.264 absent on display != 0 (picker only has display 0) and a forced player error falls back', (tester) async {
+  // Fix d559fc5: /displays is one comma-separated line ("0:0,2:0,13:0"); the
+  // picker must offer every id it lists, and H.264 only on display 0.
+  testWidgets('T20c picker offers every /displays id, H.264 only on display 0, and a forced player error falls back', (tester) async {
     await _guard('T20c', () async {
-      // Part 1: what the display picker offers on the real phone.
+      // ---- Part 1: the display picker against the real phone.
+      // Read the ids independently of the app's parser (newline or comma separated, "id:flags").
+      List<int> parseIds(String text) => <int>[
+            for (final part in text.split(RegExp(r'[,\n]')).map((p) => p.trim()).where((p) => p.isNotEmpty))
+              if (int.tryParse(part.split(':').first.trim()) case final int id) id,
+          ];
+      // The phone's list changes over time: besides 0 and 2 it reports a
+      // short-lived virtual display whose id grows from run to run (13, 16,
+      // 20, 23 ...), so /displays is read right before the app starts and again
+      // right after the picker is read. The app's own fetch happens between
+      // the two reads: the picker must offer every id present in both reads
+      // and nothing that is in neither.
       final displaysText = (await tester.runAsync(() => _probe.getText('/displays')))!.trim();
-      final adapter = await pumpHuskApp(tester, servers: [phoneServer]);
+      final phoneIds = parseIds(displaysText);
+      String label(int id) => id == 0 ? 'Phone (display 0)' : 'Display $id';
+
+      final adapter = await pumpHuskApp(
+        tester,
+        servers: [phoneServer],
+        settings: const AppSettings(defaultScreenMode: ScreenMode.h264),
+      );
       await _openScreenTab(tester);
       await pumpUntil(tester, find.byType(SegmentedButton<ScreenMode>));
-      final h264OnDisplay0 = _modeSegment('H.264').evaluate().isNotEmpty;
-      await tester.tap(find.byType(DropdownButton<int>));
-      await pumpFor(tester, const Duration(milliseconds: 500));
-      final labels = <String>{};
-      for (final item in tester.widgetList<DropdownMenuItem<int>>(find.byType(DropdownMenuItem<int>))) {
-        final child = item.child;
-        if (child is Text && child.data != null) labels.add(child.data!);
+      await pumpUntil(tester, find.byType(H264View), timeout: const Duration(seconds: 30));
+      final h264On0 = _modeSegment('H.264').evaluate().isNotEmpty;
+      final mode0 = _selectedMode(tester);
+      // /displays is fetched asynchronously; give it time to reach the picker.
+      List<int?> pickerIds() => [for (final i in tester.widget<DropdownButton<int>>(find.byType(DropdownButton<int>)).items ?? const <DropdownMenuItem<int>>[]) i.value];
+      final idClock = Stopwatch()..start();
+      while (pickerIds().length < 2 && idClock.elapsed < const Duration(seconds: 10)) {
+        await tester.pump(const Duration(milliseconds: 100));
       }
-      await snap(tester, _group, 'T20c-1');
-      // Close the menu by re-picking display 0 (no change of value).
-      await tester.tap(find.text('Phone (display 0)').last);
-      await pumpFor(tester, const Duration(milliseconds: 500));
-      final onlyDisplay0 = labels.length == 1 && labels.contains('Phone (display 0)');
-      // The phone answers /displays as one comma-separated line (e.g. "0:0,2:0"),
-      // so read the ids independently of the app's parser.
-      final phoneIds = [
-        for (final part in displaysText.split(RegExp(r'[,\n]')).map((p) => p.trim()).where((p) => p.isNotEmpty))
-          if (int.tryParse(part.split(':').first.trim()) case final int id) id,
+      final ids = pickerIds();
+      final labels = [
+        for (final i in tester.widget<DropdownButton<int>>(find.byType(DropdownButton<int>)).items!)
+          if (i.child case Text(:final data?)) data,
       ];
-      final missing = phoneIds.where((id) => id != 0 && !labels.contains('Display $id')).toList();
-      final displaysEvidence = 'picker items=${labels.toList()} /displays="${displaysText.replaceAll('\n', ' | ')}" (display ids reported by the phone: $phoneIds'
-          '${missing.isEmpty ? '' : '; NOT offered by the picker: $missing'}) H.264 segment on display 0=$h264OnDisplay0';
+      await tester.tap(find.byType(DropdownButton<int>));
+      await pumpFor(tester, const Duration(milliseconds: 600));
+      final displaysText2 = (await tester.runAsync(() => _probe.getText('/displays')))!.trim();
+      final phoneIds2 = parseIds(displaysText2);
+      final stable = phoneIds.toSet().intersection(phoneIds2.toSet());
+      final seen = phoneIds.toSet().union(phoneIds2.toSet());
+      final menuShows = {for (final id in ids.whereType<int>()) id: find.text(label(id)).evaluate().isNotEmpty};
+      await snap(tester, _group, 'T20c-1');
+      final pickerOk = stable.contains(0) &&
+          ids.length == ids.toSet().length &&
+          ids.toSet().containsAll(stable) &&
+          seen.containsAll(ids.whereType<int>()) &&
+          labels.toSet().containsAll([for (final id in ids.whereType<int>()) label(id)]) &&
+          menuShows.values.every((v) => v);
+      final pickerEv = '/displays before app="${displaysText.replaceAll('\n', ' | ')}" (ids $phoneIds), after picker read="${displaysText2.replaceAll('\n', ' | ')}" '
+          '(ids $phoneIds2); ids in both=${stable.toList()..sort()}; picker items values=$ids labels=$labels; '
+          'open menu shows each=${menuShows.entries.map((e) => '${e.key}:${e.value}').join(',')}';
+
+      final others = (stable.where((id) => id != 0).toList()..sort());
+      var otherEv = 'phone reports no display other than 0, H.264 absence on another display cannot be driven';
+      var otherOk = false;
+      var backOk = false;
+      if (others.isEmpty) {
+        await tester.tap(find.text(label(0)).last);
+        await pumpFor(tester, const Duration(milliseconds: 500));
+      } else {
+        final other = others.first;
+        await tester.tap(find.text(label(other)).last);
+        await pumpFor(tester, const Duration(seconds: 3));
+        final ddValue = tester.widget<DropdownButton<int>>(find.byType(DropdownButton<int>)).value;
+        final h264OnOther = _modeSegment('H.264').evaluate().isNotEmpty;
+        final modeOther = _selectedMode(tester);
+        final h264ViewOther = find.byType(H264View).evaluate().isNotEmpty;
+        final mjpegOther = find.byType(MjpegView).evaluate().isNotEmpty;
+        final streamReq = adapter.log.where((u) => u.path == '/screen' && u.queryParameters['d'] == '$other').length;
+        await snap(tester, _group, 'T20c-2');
+        otherOk = ddValue == other && !h264OnOther && modeOther.length == 1 && modeOther.first == ScreenMode.mjpeg && !h264ViewOther && mjpegOther;
+        otherEv = 'picked display $other (picker value=$ddValue): H.264 segment offered=$h264OnOther, selected=${modeOther.map((m) => m.name).toList()}, '
+            'H264View=$h264ViewOther MjpegView=$mjpegOther, /screen?d=$other requests=$streamReq';
+
+        // Back to display 0: H.264 is offered again and (default H.264) shown again.
+        await tester.tap(find.byType(DropdownButton<int>));
+        await pumpFor(tester, const Duration(milliseconds: 600));
+        await tester.tap(find.text(label(0)).last);
+        final backClock = Stopwatch()..start();
+        while (find.byType(H264View).evaluate().isEmpty && backClock.elapsed < const Duration(seconds: 15)) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        await pumpFor(tester, const Duration(seconds: 1));
+        final dd0 = tester.widget<DropdownButton<int>>(find.byType(DropdownButton<int>)).value;
+        final h264Back = _modeSegment('H.264').evaluate().isNotEmpty;
+        final viewBack = find.byType(H264View).evaluate().isNotEmpty;
+        final modeBack = _selectedMode(tester);
+        await snap(tester, _group, 'T20c-3');
+        backOk = dd0 == 0 && h264Back && viewBack && modeBack.contains(ScreenMode.h264);
+        otherEv += '; back on display 0 (value=$dd0): H.264 segment offered=$h264Back, selected=${modeBack.map((m) => m.name).toList()}, H264View=$viewBack';
+      }
+      final blockedCalls = adapter.blocked.length;
+      final displayEv = 'display 0: H.264 segment offered=$h264On0 selected=${mode0.map((m) => m.name).toList()}; $pickerEv; $otherEv; blocked=$blockedCalls';
+      print('STEP T20c ${pickerOk && h264On0 && otherOk && backOk ? 'PASS' : 'FAIL'} picker/H.264 per display: $displayEv');
       expect(adapter.blocked, isEmpty);
 
-      // Part 2: force a player error safely with a standalone H264View on a closed local port.
+      // ---- Part 2: force a player error safely with a standalone H264View on a closed local port.
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 300));
       final failures = <String>[];
@@ -530,16 +622,22 @@ void main() {
         ),
       );
       await _pumpWhile(tester, () => failures.isEmpty, const Duration(seconds: 25));
-      await snap(tester, _group, 'T20c-2');
+      await snap(tester, _group, 'T20c-4');
       final fallbackOk = failures.isNotEmpty;
       check('T20c-fallback', fallbackOk ? 'PASS' : 'FAIL',
           fallbackOk
               ? 'standalone H264View on closed port 127.0.0.1:1 called onFailed ${failures.length}x with "${failures.first}" '
                   '(the Screen tab turns this call into the "using MJPEG" snackbar; its own wiring is covered by unit tests, not re-driven here)'
               : 'onFailed was NOT called within 25 s for a closed port');
-      check('T20c', fallbackOk ? 'BLOCKED' : 'FAIL',
-          'display != 0 part BLOCKED: the picker offers no display other than 0, so H.264 absence on another display cannot be driven ($displaysEvidence; '
-          'onlyDisplay0=$onlyDisplay0); forced-error fallback: ${fallbackOk ? 'PASS (T20c-fallback)' : 'FAIL (T20c-fallback)'}');
+
+      final displayPartOk = pickerOk && h264On0 && otherOk && backOk;
+      final status = !pickerOk || !h264On0 || (others.isNotEmpty && (!otherOk || !backOk)) || !fallbackOk
+          ? 'FAIL'
+          : (others.isEmpty ? 'BLOCKED' : 'PASS');
+      check('T20c', status, '$displayEv; forced-error fallback: ${fallbackOk ? 'PASS' : 'FAIL'} (T20c-fallback)');
+      expect(pickerOk, isTrue, reason: pickerEv);
+      expect(h264On0, isTrue, reason: 'H.264 segment must be offered on display 0');
+      if (others.isNotEmpty) expect(displayPartOk, isTrue, reason: displayEv);
       expect(fallbackOk, isTrue);
       expect(failures.length, 1, reason: 'onFailed must fire once');
     });
@@ -682,9 +780,59 @@ void main() {
 
 String _r(Rect r) => '(${r.left.toStringAsFixed(1)},${r.top.toStringAsFixed(1)} ${r.width.toStringAsFixed(1)}x${r.height.toStringAsFixed(1)})';
 
-/// True when a /dump looks like the Samsung lock screen (keyguard) rather than an app.
-bool _looksLocked(String dump) =>
-    dump.contains('open Samsung Wallet') || RegExp(r'emergency call', caseSensitive: false).hasMatch(dump);
+String _o(Offset o) => '(${o.dx.toStringAsFixed(1)},${o.dy.toStringAsFixed(1)})';
+
+/// /dump of display 0 on the real clock, or null when it cannot be read.
+Future<String?> _dumpOrNull(WidgetTester tester) => tester.runAsync<String?>(() async {
+      try {
+        return await _probe.getText('/dump', {'d': '0'});
+      } catch (_) {
+        return null;
+      }
+    });
+
+/// Rows of the Settings main list (English One UI) used to see where the phone is.
+const List<String> _settingsRows = ['Connections', 'Sounds and vibration', 'Notifications', 'Display', 'Wallpaper', 'Themes', 'Lock screen'];
+
+/// Settings main-list rows currently on screen (via read-only /find), name -> centre y.
+Future<Map<String, int>> _visibleRows(WidgetTester tester) async {
+  final rows = <String, int>{};
+  await tester.runAsync(() async {
+    for (final name in _settingsRows) {
+      try {
+        final p = await _probe.find('^${RegExp.escape(name)}\$');
+        if (p != null && p.y > 0 && p.y < 2112) rows[name] = p.y;
+      } catch (_) {}
+    }
+  });
+  return rows;
+}
+
+/// Polls [_visibleRows] for up to 6 s until [done]; returns the last rows.
+Future<Map<String, int>> _untilRows(WidgetTester tester, bool Function(Map<String, int> rows) done) async {
+  var rows = <String, int>{};
+  final clock = Stopwatch()..start();
+  while (clock.elapsed < const Duration(seconds: 6)) {
+    await pumpFor(tester, const Duration(milliseconds: 500));
+    rows = await _visibleRows(tester);
+    if (done(rows)) break;
+  }
+  return rows;
+}
+
+/// Scrolls the just-launched Settings list back to its top (it reopens at its
+/// last scroll position).
+Future<void> _settingsTop(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    for (var i = 0; i < 4; i++) {
+      try {
+        await _phone('/scroll', {'d': '0', 'dir': 'back'});
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    await Future<void>.delayed(const Duration(seconds: 1));
+  });
+}
 
 /// evaluateJavascript may hand back the JSON string itself or a quoted/escaped copy of it.
 Map<String, dynamic>? _decodeJs(Object? raw) {

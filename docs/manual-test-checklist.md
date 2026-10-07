@@ -4,6 +4,8 @@ Status: PARTIALLY EXECUTED on macOS (2026-10-07), automated through `integration
 
 Counts (27 integration items): 19 PASS, 4 FAIL (S10, S11, T20b, T20c), 2 BLOCKED (S12, S16), 2 NOT RUN (S15, S14-click).
 
+Re-check after the bug-fix round (2026-10-08): S10, T20b and T20c now PASS; S11 stays BLOCKED by the phone lock screen (app-side mapping passes). The counts above are from the 2026-10-07 run.
+
 ## How the real-device run works
 - Test files: `integration_test/device/NN_*_test.dart`, shared harness `integration_test/device/support/device_harness.dart`. Run with `flutter test integration_test/device/<file> -d macos`.
 - The harness wraps the real network in a counting adapter and blocks every phone-changing request that is not on the approved list (`adapter.blocked` was empty in every reported run).
@@ -59,13 +61,15 @@ Each line: the integration test file and test id, one line of evidence, and the 
   - Fakes: none.
 - [x] Sensors: light reading shows values; Mic Sample shows an amplitude (extra check)
   - Real: PASS. `03_overview_test.dart` "S09b". Evidence: "CM36658 Light: 11.00" equals the probe; mic "0 / 32767" equals the probe; Live switches untouched.
-- [ ] Camera stream + snapshot + save; front/back switch (restore Front)
+- [x] Camera stream + snapshot + save; front/back switch (restore Front)
   - Real: FAIL (intermittent product bug, see "Product bugs found"). `integration_test/device/04_camera_test.dart` "S10". Evidence: stream decodes frames at 8-9 fps and Snapshot dialog opens with Image + Save (Save not pressed); Back applies within 43-174 ms; but Front after Back failed in 2 of 4 conclusive runs (`/flags.front` stayed false 15 s after `/set?front=1` succeeded; in the passing run it took 15.8 s to read true).
   - Not covered: Snapshot Save (native dialog, human-only).
+  - Re-check after fix (2026-10-08): PASS. `04_camera_test.dart` "S10" against the real phone. Evidence: Back settled in 661 ms and Front in 739 ms, each with exactly 1 /set and no retry, `/flags.front` matched (false then true), no error snackbar, buttons re-enabled, stream reconnected with a fresh frame.
   - Fakes: `test/features/camera/camera_tab_test.dart`, `snapshot_test.dart`, `test/shared/mjpeg_view_test.dart`.
 - [ ] Screen (screen sharing on): MJPEG view, tap, swipe, wheel scroll, Back/Home/Recents, Esc, text + Enter
   - Real: FAIL (product bug) and mostly NOT RUN. `integration_test/device/05_screen_test.dart` "S11". Evidence: frame is 720x1480 (aspect 0.4865) but /display is 1080x2112 (0.5114), a 4.9% mismatch (limit 3%); the other 11 sub-steps (Settings, tap, nav Back, swipe, wheel, Esc, Recents, Home, text, Enter, cleanup) did not run because the phone is on a secure lock screen.
   - Fakes: `test/features/screen/screen_tab_test.dart`, `gesture_layer_test.dart`, `input_queue_test.dart`.
+  - Re-check after fix (2026-10-08): BLOCKED (not ticked). The app side passes: a click at the drawn frame centre sent `/tap?x=540&y=1110` and a click 2 px above the bottom edge sent `/tap?x=540&y=2213` (inside the nav bar strip), one /tap each. The phone was on its secure lock screen, so the phone reaction and the other sub-steps could not run. S11b PASS, S12 BLOCKED, S15 BLOCKED in the same run.
 - [ ] Landscape: rotate the phone, check taps still land where clicked
   - Real: BLOCKED (human step). `05_screen_test.dart` "S12". Evidence: `/display` rotation=0, 1080x2112 (portrait); physical rotation cannot be automated.
   - Fakes: `test/features/screen/coordinate_mapper_test.dart`, `screen_tab_test.dart`.
@@ -95,10 +99,12 @@ Each line: the integration test file and test id, one line of evidence, and the 
 All tests in `integration_test/device/06_h264_web_test.dart`.
 - [ ] (a) H.264 mode plays /screen.mp4 on macOS, and on Android if a device is attached. Lag is visibly lower than MJPEG; add a rough latency estimate by tapping on the phone. Running about 60 s shows no drift.
   - PARTIAL, not ticked. Plays on macOS: PASS ("S13": 30.08 s, no fallback; "S13 spike": position +18.79 s over 20.0 s wall). Not done: 60 s run, lag comparison against MJPEG and tap-based latency (human-only), Android (no device).
-- [ ] (b) Taps, swipes and scrolls over the H.264 Video widget reach the phone at the right coordinates.
+- [x] (b) Taps, swipes and scrolls over the H.264 Video widget reach the phone at the right coordinates.
   - FAIL (product bug). "T20b". Evidence: target 540,1110 (/info 1080x2220 space) but the app sent `/tap x=540 y=1056` (54 px off vertically, tolerance 3); GestureLayer uses the /display size 1080x2112 while the video draws the 1080x2220 frame. Swipes and scrolls not run. Even with correct coordinates the phone reaction would be BLOCKED by the keyguard.
-- [ ] (c) On a platform outside h264Platforms, or on a display other than 0, the H.264 segment is absent. A forced player error shows the 'using MJPEG' snack and falls back.
+  - Re-check after fix (2026-10-08): PASS. "T20b". Evidence: centre click sent one `/tap x=540 y=1110` and opened "Sounds and vibration" on the phone; a click 2 px above the bottom edge sent `/tap x=540 y=2213` and pressed nav-bar Home (launcher Play Store found). Swipes and scrolls were not run.
+- [x] (c) On a platform outside h264Platforms, or on a display other than 0, the H.264 segment is absent. A forced player error shows the 'using MJPEG' snack and falls back.
   - FAIL (product bug) for the display != 0 half, PASS for the forced-error half. "T20c" and "T20c-fallback". Evidence: the picker only offers `Phone (display 0)` although the phone reports `/displays` = `0:0,2:0,13:0` (one comma-separated line); `DisplayEntry.parseList` splits on newlines only, so display 2/13 can never be picked. Forced error: a standalone H264View on closed port 127.0.0.1:1 called `onFailed` once with "Failed to open /screen.mp4." (no phone traffic). Platform outside `h264Platforms`: not run.
+  - Re-check after fix (2026-10-08): PASS. "T20c". Evidence: `/displays` returned `0:0,2:0,25:0`; the picker offered Phone (display 0), Display 2 and Display 25; on Display 2 the H.264 segment was absent and MJPEG was used (one `/screen?d=2`); back on display 0 H.264 returned. Forced-error half still PASS.
 - [ ] (d) Web control loads /control, the page's own clicks work, and toggling 'H.264 page' loads /controlhw.
   - PARTIAL, not ticked. "S14" PASS for /control and /controlhw loading and the H.264 page segment. NOT RUN: the page's own clicks ("S14-click" is a test gap).
 - [x] (e) Set Settings -> Default mode to Web control, then reopen the Screen tab. It opens in Web control.
@@ -127,6 +133,14 @@ All tests in `integration_test/device/06_h264_web_test.dart`.
 Also blocked by the phone's secure lock screen until a human unlocks it: S11 sub-steps, S16, S14 page clicks, and the phone-side reaction in T20b.
 
 ## Product bugs found
+### Fixed (2026-10-08)
+- S10 Camera Back -> Front unreliable: fixed in c2bb336 (fix: confirm camera side switches against /flags and retry once (S10)). Re-check PASS.
+- S11 Click-to-phone mapping uses the wrong device size (MJPEG): fixed in 703f636 (fix: map Screen tab clicks onto the streamed frame, not /display). App-side re-check PASS; the phone reaction is still BLOCKED by the lock screen.
+- T20b Same root cause for H.264 taps: fixed in 703f636 (fix: map Screen tab clicks onto the streamed frame, not /display). Re-check PASS.
+- T20c `/displays` parsing does not match the phone's wire format: fixed in d559fc5 (fix: parse comma-separated /displays lists (T20c)). Re-check PASS.
+
+The original reports follow for reference.
+
 1. S10 Camera Back -> Front is unreliable (intermittent).
    - Expected: after Back then Front on the Camera tab, `GET /flags` shows front=false then front=true, the video switches each time, and the UI ends on Front.
    - Actual: when Front is pressed 1-3 s after Back, the phone answers `/set?front=1` with success but `/flags.front` stays false for 15 s or more (attempts 1 and 5), or about 15.8 s (attempt 6); attempt 3 took 1.4 s. No error is shown. Also the tab refetches /flags right after /set, can get the old value, and shows the previous side until the next 10 s poll (UI showed Back while the stream showed the front camera). The frames after Back looked identical to the front view, so the video may not switch at all. Could be phone-side (Husk 1.4 camera restart) or the app needing to confirm or retry; `lib/` was not changed.
