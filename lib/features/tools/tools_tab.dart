@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 
 import 'inspect_tool.dart';
 import 'launch_tool.dart';
+import 'management_tool.dart';
+import 'motion_tool.dart';
+import 'rpc_tool.dart';
+import 'token_tool.dart';
 
 enum ToolPage {
   inspect('Inspect', Icons.manage_search),
-  launch('Launch', Icons.open_in_new);
+  launch('Launch', Icons.open_in_new),
+  motion('Motion alarm', Icons.motion_photos_on),
+  management('Management', Icons.adb),
+  rpc('RPC console', Icons.terminal),
+  token('Access token', Icons.key);
 
   const ToolPage(this.label, this.icon);
 
@@ -28,6 +36,10 @@ class _ToolsTabState extends State<ToolsTab> {
   Widget _page(ToolPage page) => switch (page) {
         ToolPage.inspect => InspectTool(serverId: widget.serverId),
         ToolPage.launch => LaunchTool(serverId: widget.serverId),
+        ToolPage.motion => MotionTool(serverId: widget.serverId),
+        ToolPage.management => ManagementTool(serverId: widget.serverId),
+        ToolPage.rpc => RpcTool(serverId: widget.serverId),
+        ToolPage.token => TokenTool(serverId: widget.serverId),
       };
 
   @override
