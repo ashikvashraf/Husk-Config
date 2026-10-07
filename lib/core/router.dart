@@ -1,11 +1,13 @@
 import 'package:go_router/go_router.dart';
 
 import '../features/dashboard/dashboard_screen.dart';
+import '../features/device/device_shell.dart';
 import '../features/servers/scan_screen.dart';
 import '../features/servers/server_form_screen.dart';
 import '../features/settings/settings_screen.dart';
 
-GoRouter createRouter() => GoRouter(
+GoRouter createRouter({String initialLocation = '/'}) => GoRouter(
+      initialLocation: initialLocation,
       routes: [
         GoRoute(path: '/', builder: (context, state) => const DashboardScreen()),
         GoRoute(
@@ -20,6 +22,13 @@ GoRouter createRouter() => GoRouter(
         GoRoute(
           path: '/servers/:id/edit',
           builder: (context, state) => ServerFormScreen(serverId: state.pathParameters['id']),
+        ),
+        GoRoute(
+          path: '/device/:id/:tab',
+          builder: (context, state) => DeviceShell(
+            serverId: state.pathParameters['id']!,
+            tab: DeviceShell.parseTab(state.pathParameters['tab']),
+          ),
         ),
       ],
     );
