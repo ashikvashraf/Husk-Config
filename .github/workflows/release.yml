@@ -313,7 +313,9 @@ jobs:
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
           if (-not $dumpbin) { throw 'dumpbin.exe not found via vswhere.' }
-          $vcRuntime = '^(msvcp140.*|vcruntime140.*|concrt140|vccorlib140|vcomp140)\.dll$'
+          # Release MSVC runtime only. The debug runtime (…d.dll, ucrtbased.dll) is not redistributable.
+          $vcRuntime = '^(msvcp140(_1|_2|_atomic_wait|_codecvt_ids)?|vcruntime140(_1)?|concrt140|vccorlib140|vcomp140)\.dll$'
+          $debugRuntime = '^(msvcp140d.*|vcruntime140d|vcruntime140_1d|ucrtbased|concrt140d|vccorlib140d|vcomp140d)\.dll$'
           $webView2Loader = Get-ChildItem -Path 'build\windows\x64\packages' -Recurse -Filter 'WebView2Loader.dll' -ErrorAction SilentlyContinue |
             Where-Object { $_.Directory.Name -eq 'x64' } | Select-Object -First 1
           $queue = [System.Collections.Generic.Queue[string]]::new()
@@ -338,6 +340,12 @@ jobs:
                 continue
               }
               if (Test-Path (Join-Path $stage $dep)) { continue }
+              if ($dep -match $debugRuntime) {
+                # e.g. zlib.dll from media_kit's prebuilt ANGLE archive is a debug build; nothing in the app imports
+                # it, so it is harmless, but never ship Microsoft's debug runtime to make it loadable.
+                Write-Output "::warning::$leaf imports the debug MSVC runtime ($dep); not bundled. $leaf cannot load on PCs without Visual Studio."
+                continue
+              }
               $fromSystem = Join-Path $system32 $dep
               if ($dep -match $vcRuntime -and (Test-Path $fromSystem)) {
                 Copy-Item $fromSystem $stage
