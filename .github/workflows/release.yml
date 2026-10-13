@@ -217,6 +217,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
+      - name: Use CocoaPods for plugins
+        shell: bash
+        # flutter_inappwebview_macos 1.2.0-beta.3's Swift package declares macOS 10.14 and fails to compile
+        # under Xcode 26.x (availability error in WebAuthenticationSession.swift). Through CocoaPods it is
+        # compiled at the app's 12.0 deployment target (macos/Podfile post_install), which builds cleanly.
+        # Local builds with Xcode 27 still use Swift Package Manager. Revisit when the plugin is fixed.
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Build macOS app
         shell: bash
         # CFBundleShortVersionString only allows digits and dots, so pre-release suffixes are dropped here
