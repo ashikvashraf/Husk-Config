@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -36,12 +37,12 @@ class HuskApi {
   /// For endpoints that drive the phone's UI (dump, rpc, management).
   static const _slow = Duration(seconds: 30);
 
-  /// Idle limit for [openMultipart]. dio's receiveTimeout (dio 5.x IO
-  /// adapter) bounds only the wait for the response headers and gives no
-  /// per-chunk timer for `ResponseType.stream`. So [openMultipart] wraps the
-  /// returned stream in `Stream.timeout(streamIdle)`: when no chunk arrives
-  /// for this long, the stream emits [OfflineException], closes, and cancels
-  /// the underlying response so consumers can reconnect.
+  /// Idle limit for [openMultipart]. It is used both as dio's receiveTimeout
+  /// (which dio may also apply between chunks of a streamed body) and as a
+  /// `Stream.timeout` on the returned stream: when no chunk arrives for this
+  /// long, the stream emits [OfflineException], closes, and cancels the
+  /// underlying response so consumers can reconnect. Whichever timer fires
+  /// first, consumers see an [OfflineException], never a raw DioException.
   final Duration streamIdle;
 
   final String baseUrl;
@@ -131,16 +132,31 @@ class HuskApi {
       final bytes = await body.stream.fold<List<int>>(<int>[], (all, chunk) => all..addAll(chunk));
       _check(status, utf8.decode(bytes, allowMalformed: true));
     }
-    // dio gives no per-chunk idle timeout for streams, so a connected but
-    // silent stream (Wi-Fi drop, phone asleep) would hang forever. On silence,
-    // surface an OfflineException and close so consumers can reconnect.
-    final stream = body.stream.timeout(
-      streamIdle,
-      onTimeout: (sink) {
-        sink.addError(const OfflineException('Stream stalled'));
-        sink.close();
-      },
-    );
+    // A connected but silent stream (Wi-Fi drop, phone asleep) must not hang:
+    // on silence, surface an OfflineException and close so consumers can
+    // reconnect. dio may also fail the body itself (its receiveTimeout can fire
+    // per chunk, sockets reset); those errors are mapped to OfflineException
+    // too, so consumers only ever see HuskException from the stream.
+    final stream = body.stream
+        .timeout(
+          streamIdle,
+          onTimeout: (sink) {
+            sink.addError(const OfflineException('Stream stalled'));
+            sink.close();
+          },
+        )
+        .transform(StreamTransformer<Uint8List, Uint8List>.fromHandlers(
+          handleError: (error, stackTrace, sink) => sink.addError(
+            error is HuskException
+                ? error
+                : OfflineException(
+                    error is DioException && error.type == DioExceptionType.receiveTimeout
+                        ? 'Stream stalled'
+                        : 'Connection lost',
+                  ),
+            stackTrace,
+          ),
+        ));
     return (contentType: response.headers.value(Headers.contentTypeHeader) ?? '', stream: stream);
   }
 

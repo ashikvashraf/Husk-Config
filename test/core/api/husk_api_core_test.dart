@@ -135,6 +135,17 @@ void main() {
     expect(received, [1]);
   });
 
+  test('openMultipart maps errors raised by the body stream itself to OfflineException', () async {
+    // dio applies receiveTimeout to streamed bodies too; its DioException must not leak to consumers.
+    final controller = StreamController<Uint8List>();
+    addTearDown(controller.close);
+    final adapter = FakeAdapter((_) => ResponseBody(controller.stream, 200));
+    final api = HuskApi(baseUrl: 'http://10.0.0.5:8090', adapter: adapter, streamIdle: const Duration(seconds: 30));
+    final response = await api.openMultipart('/stream');
+    controller.addError(DioException.receiveTimeout(timeout: const Duration(milliseconds: 50), requestOptions: RequestOptions()));
+    await expectLater(response.stream.drain<void>(), throwsA(isA<OfflineException>()));
+  });
+
   test('openMultipart cancels the stalled source so the connection is released', () async {
     var sourceCancelled = false;
     final controller = StreamController<Uint8List>(onCancel: () => sourceCancelled = true);
