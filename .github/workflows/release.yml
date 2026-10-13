@@ -330,6 +330,13 @@ jobs:
               if ($line -notmatch '^\s+(\S+\.dll)\s*$') { continue }
               $dep = $Matches[1]
               if ($dep -match '^(api|ext)-ms-') { continue } # API sets, resolved by Windows itself
+              # package:jni (pulled in through path_provider_android) bundles dartjni.dll on every platform. It is an
+              # FFI library opened only when Dart code calls JNI, which the Windows app never does, so its jvm.dll
+              # import is never resolved at runtime.
+              if ($leaf -ieq 'dartjni.dll' -and $dep -ieq 'jvm.dll') {
+                Write-Output "Skipped $dep (imported by $leaf): only needed when Dart code uses JNI, never on Windows."
+                continue
+              }
               if (Test-Path (Join-Path $stage $dep)) { continue }
               $fromSystem = Join-Path $system32 $dep
               if ($dep -match $vcRuntime -and (Test-Path $fromSystem)) {
